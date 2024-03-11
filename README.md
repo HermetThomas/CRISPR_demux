@@ -32,7 +32,7 @@ David Chardin, Cyprien Gille, Thierry Pourcher and Michel Barlaud : *Accurate Di
 ## **Installation**
 
 ```{bash}
-git clone (lien)
+git clone https://github.com/HermetThomas/CRISPR_demux.git
 ```
 
 ## **Input format**
