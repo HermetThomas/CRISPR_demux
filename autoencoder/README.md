@@ -16,32 +16,18 @@ and
 ## Table of Contents
 ***
 1. [Repository Contents](repository-contents)
-2. [Installation](#installation)
-3. [How to use](#how-to-use)
+2. [Installation and Use](#installation-and-use)
   
 ### **Repository Contents**
 |File/Folder | Description |
 |:---|:---:|
-|`script_autoencoder.py`|Main script to train and evaluate the SAE|
-|`script_NN.py`|Script to train and evaluate the neural network classifier|
-|`script_PLSDA_RF_SVM.py`|Script to fit and evaluate classical methods|
-|`datas`|Contains the three databases used in the paper|
-|`functions`|Contains dedicated functions for the three main scripts|
+|`Run_SSAE_alldata.py`|Main script to train and evaluate the SAE|
+|`functions`|Contains fuctions called in the main script|
     
-### **Installation** 
+### **Installation and Use** 
 ---
 
-To run this code, you will need :
-- A version of python, 3.8 or newer. If you are new to using python, we recommend downloading anaconda ([here](https://www.anaconda.com/products/individual)) and using Spyder (available by default from the anaconda navigator) to run the code.
-- [Pytorch](https://pytorch.org/get-started/locally/).
-- The following packages, all of which except captum and shap are **usually included in the anaconda distribution** : [numpy](https://numpy.org/install/), [matplotlib](https://matplotlib.org/stable/users/installing/index.html), [scikit-learn](https://scikit-learn.org/stable/install.html), [pandas](https://pandas.pydata.org/getting_started.html), [shap](https://pypi.org/project/shap/), [captum](https://captum.ai/#quickstart). To install any package, you can use anaconda navigator's built-in environment manager.
+The autencoder is automatically run when running the CRISPR_demux.py script
+The dependencies are already specified in the requirements.txt of the main branch
 
-See `requirements.txt` for the exact versions on which this code was developed.
-
-### **How to use**
-
-Everything is ready, you can just run the script you want using, for example, the run code button of your Spyder IDE. Alternatively, you can run the command `python [script_name].py` in the Anaconda Prompt from the root of this folder (i.e. where you downloaded and unzipped this repository).
-
-Each script will produce results (statistical metrics, top features...) in a results folder.
-
-You can change the database used, and other parameters, near the start of each script.
+---
