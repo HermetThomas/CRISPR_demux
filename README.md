@@ -81,7 +81,7 @@ Counts matrix &rarr; **X cells * Y genes**
 
 
 
-### **If the HTO counts and gRNA counts are in a the main counts matrix**
+### **If the HTO counts and gRNA counts are in the main counts matrix**
 
 The HTO and gRNA counts are found by using the gene types in the features.tsv.gz file.
 
@@ -101,7 +101,7 @@ python3 CRISPR_demux.py
 
 
 
-### **If the HTO counts or gRNA counts are in separate counts matrices**
+### **If the HTO counts or gRNA counts are in a separate counts matrix**
 
 Add the path to the first library of HTO counts / gRNA counts / both
 
