@@ -29,21 +29,19 @@ def main() :
     - Pathways associated to most discriminant features
     """    
 
-    results_dir = create_results_folder()
-
     parser = argparse.ArgumentParser(
         prog = 'demux', 
         formatter_class=argparse.MetavarTypeHelpFormatter,
         description = 'Detects HTO and gRNA present in each cell and creates a classification dataframe')
     
-    parser.add_argument('-libs', type = int, help = 'Number of libraries', required = True)
+    parser.add_argument('-libs', type = int, help = 'Number of libraries', default = 1)
     parser.add_argument('-counts', type = dir_path, help = 'Path/to/counts/library_1/', required = True)
     parser.add_argument('-grna', type = dir_path, help = 'Path/to/gRNA/library_1/')
     parser.add_argument('-hto', type = dir_path, help = 'Path/to/hto/library_1/')
-    parser.add_argument('-conditions', nargs = '+', type =str, help = 'Names of the conditions corresponding to the HTOs')
-    parser.add_argument('-plot', action='store_true', help = 'Add -saveplots to save gRNA and HTO distribution plots', default = False)
+    parser.add_argument('-plot', action='store_true', help = 'Add -plot to save gRNA and HTO distribution plots', default = False)
     parser.add_argument('-nohto', action='store_true', help = 'Add -nohto i you do not have HTO to demultiplex in yout dataset', default = False)
     parser.add_argument('-pathways', action='store_true', help = 'Add -pathways if you want to find pathways associated to te top genes', default = False)
+    parser.add_argument('-sep', type = str, help = 'Separation used to index guides names  e.g :  - / _  : ', default = '-')
 
     args = parser.parse_args()
 
@@ -54,7 +52,7 @@ def main() :
     if args.grna :
         gfolder = args.grna
         grna_names = list(pd.read_csv(gfolder + 'features.tsv.gz', sep = '\t', names = ['Names']).Names)
-        grna_names, targets = clean_guides(grna_names)
+        grna_names, targets = clean_guides(grna_names, args.sep)
 
     if args.hto :
 
@@ -165,7 +163,7 @@ def main() :
                     features = pd.read_csv(folder + 'features.tsv.gz', sep = '\t').iloc[:, feats_col].tolist()
                     grna_rows = find_HTOs(features)
                     grna_names = [genes_names[i] for i in grna_rows]
-                    grna_names, targets = clean_guides(grna_names)
+                    grna_names, targets = clean_guides(grna_names, args.sep)
 
                     for grna_row, grna_name in zip(grna_rows, grna_names) :
                         counts_matrices[matrix_name].obs[grna_name] = counts_matrices[matrix_name].to_df().T.iloc[grna_row].T.astype(int)
@@ -183,7 +181,7 @@ def main() :
                 features = pd.read_csv(cfolder + 'features.tsv.gz', sep = '\t').iloc[:, feats_col].tolist()
                 grna_rows = find_guides(features)
                 grna_names = [genes_names[i] for i in grna_rows]
-                grna_names, targets = clean_guides(grna_names)
+                grna_names, targets = clean_guides(grna_names, args.sep)
 
                 for grna_row, grna_name in zip(grna_rows, grna_names) :
                     counts_adata.obs[grna_name] = counts_adata.to_df().T.iloc[grna_row].T.astype(int)
@@ -280,10 +278,12 @@ def main() :
         #Run the AutoEncoder
         ####################
 
+        results_dir = create_results_folder()
+
         for target_name, target in data_sep :
             print(f"\nProcessing {target_name}")
 
-            run_SSAE(None, None, target_name, target, results_dir)
+            run_SSAE(target_name, target, results_dir)
 
     
         ########################################
@@ -536,7 +536,7 @@ def main() :
                     features = pd.read_csv(folder + 'features.tsv.gz', sep = '\t').iloc[:, feats_col].tolist()
                     grna_rows = find_HTOs(features)
                     grna_names = [genes_names[i] for i in grna_rows]
-                    grna_names, targets = clean_guides(grna_names)
+                    grna_names, targets = clean_guides(grna_names, args.sep)
 
                     for grna_row, grna_name in zip(grna_rows, grna_names) :
                         counts_matrices[matrix_name].obs[grna_name] = counts_matrices[matrix_name].to_df().T.iloc[grna_row].T.astype(int)
@@ -554,7 +554,7 @@ def main() :
                 features = pd.read_csv(cfolder + 'features.tsv.gz', sep = '\t').iloc[:, feats_col].tolist()
                 grna_rows = find_guides(features)
                 grna_names = [genes_names[i] for i in grna_rows]
-                grna_names, targets = clean_guides(grna_names)
+                grna_names, targets = clean_guides(grna_names, args.sep)
 
                 for grna_row, grna_name in zip(grna_rows, grna_names) :
                     counts_adata.obs[grna_name] = counts_adata.to_df().T.iloc[grna_row].T.astype(int)
@@ -667,11 +667,13 @@ def main() :
         #First run of AutoEncoder#
         ##########################
 
+        results_dir = create_results_folder()
+
         for htoname, HTO in data_sep.items() :
             for guidename, Guide in HTO.items() :
                 print(f"\nProcessing  {htoname}_{guidename}")
 
-                run_SSAE(htoname, HTO, guidename, Guide, results_dir)
+                run_SSAE(guidename, Guide, results_dir, htoname)
 
     
         ########################################
@@ -712,15 +714,9 @@ def main() :
 
                 predictions =  pd.read_csv(f"{results_dir}/{HTO_name}_{target_name}/Labelspred_softmax.csv", sep = ';', header = 0)   
                 predictions.columns = ['Name', 'Labels', 'Proba_Class1', 'Proba_Class2']
-                predictions = predictions[predictions.Label == 1]
+                predictions = predictions[predictions.Labels == 1]
                 predictions['label_pred'] = None     
-
-                for pred in range(len(predictions)) :
-                    if predictions.Proba_Class1.loc[pred] > 0.5 :
-                        predictions.label_pred.loc[pred] = 1
-                    else :
-                        predictions.label_pred.loc[pred] = 0
-
+                 
                 percentage_ones = sum(predictions.label_pred) / len(predictions) * 100
 
                 new_row = {'Condition' : HTO_name + '_' + target_name, 'Perturbed' : str(percentage_ones) + ' % perturbded cells' }
@@ -885,7 +881,7 @@ def check_duplicates(input_list):
     for item in input_list:
         if item in seen:
             seen[item] += 1
-            new_item = f"{item}-sg{seen[item] + 1}"
+            new_item = f"{item}-{seen[item] + 1}"
             result.append(new_item)
         else:
             seen[item] = 0
@@ -893,10 +889,9 @@ def check_duplicates(input_list):
 
     return result
 
-def clean_guides(guides_list) :
-
+def clean_guides(guides_list, sep) :
     guides_list = [guide.strip() for guide in guides_list]
-    guides_list = [guide.split('-')[0] for guide in guides_list]
+    guides_list = [guide.split(sep)[0] for guide in guides_list]
 
     #Remove poly-A tail sequence in the guides names
     guides_list = check_duplicates(guides_list)

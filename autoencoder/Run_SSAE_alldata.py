@@ -58,7 +58,7 @@ import seaborn as sns
 from sklearn.preprocessing import scale as scale
 
 
-def run_SSAE(HTOname, HTO, guidename, Guide, results_dir) :
+def run_SSAE(guidename, Guide, results_dir = None, HTOname = None) :
     # # ------------ Parameters ---------
 
     ####### Set of parameters : #######
@@ -138,7 +138,10 @@ def run_SSAE(HTOname, HTO, guidename, Guide, results_dir) :
     # Save Results or not
     SAVE_FILE = True
     # Output Path
-    results_dir = os.getcwd() + '/' + results_dir
+    if results_dir == None :
+        results_dir = os.getcwd() + '/autoencoder/results_stat/'
+    else :
+        results_dir = os.getcwd() + '/' + results_dir
 
     outputPath = (
         results_dir
