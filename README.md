@@ -32,8 +32,14 @@ David Chardin, Cyprien Gille, Thierry Pourcher and Michel Barlaud : *Accurate Di
 
 ## **Installation**
 
+Use conda to create a python environment contain all the required dependencies
+
+Clone the repository on yout device
 ```{bash}
 git clone https://github.com/HermetThomas/CRISPR_demux.git
+cd CRISPR_demux
+conda env create -f CRISPR_env.yml
+conda activate CRISPR_env
 ```
 
 ## **Input format**
