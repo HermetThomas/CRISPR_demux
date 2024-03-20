@@ -30,4 +30,6 @@ and
 The autencoder is automatically run when running the CRISPR_demux.py script
 The dependencies are already specified in the requirements.txt of the main branch
 
+To change the number of iterations on each dataset change X in SEED = [X] at line 70 in Run_SSAE_alldata.py 
+
 ---
