@@ -26,6 +26,7 @@ David Chardin, Cyprien Gille, Thierry Pourcher and Michel Barlaud : *Accurate Di
 |File/Folder|Description|
 |:-:|:-:|
 |CRISPR_demux.py|Main script to launch|
+|CRISPR_functions.py|Definition of functions used in the main script|
 |autoencoder/|Contains the AutoEncoder sript and functions it calls|
 |requirements.txt|Python packages required to run the script|
 
@@ -62,6 +63,12 @@ The different libraries need to contain the same files as the following :
    * matrix.mtx.gz  
    * barcodes.tsv.gz
    * features.tsv.gz
+ 
+The files names can contain a common prefix :
+
+  * Exp1_CRISPR_matrix.mtx.gz
+  * Exp1_CRSIPR_barcodes.tsv.gz
+  * Exp1_CRISPR_features.tsv.gz
 
 
 ### **Matrix.mtx**
@@ -95,7 +102,7 @@ python3 CRISPR_demux.py
    -counts /path/to/first/counts_library/
 ```
 
-*Add '-plots' if you want to plot the distribution of gRNAs and HTOs*
+*Add '-plot' if you want to plot the distribution of gRNAs and HTOs*
 
 *Add '-pathways' if you want to find pathways associated to the most disciminant genes*
 
@@ -107,7 +114,6 @@ Add the path to the first library of HTO counts / gRNA counts / both
 
 ```{bash}
 python3 CRISPR_demux.py 
-   -libs number_of_libraries
    -counts /path/to/first/counts_library/
    -grna /path/to/first/gRNA_library/
    -hto /path/to/first/HTO_library/
@@ -120,7 +126,6 @@ Add '-nohto' to the command line
 
 ```{bash}
 python3 CRISR_demux.py
-   -libs number_of libraries
    -counts /path/to/first/counts_library/
    -nohto
 ```
