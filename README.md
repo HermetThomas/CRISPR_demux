@@ -38,8 +38,17 @@ Clone the repository on yout device
 ```{bash}
 git clone https://github.com/HermetThomas/CRISPR_demux.git
 cd CRISPR_demux
+```
+
+Create a conda environment containing the needed dependencies
+```{bash}
 conda env create -f CRISPR_env.yml
 conda activate CRISPR_env
+```
+
+Or if you are already working on python 3.8.0 or more recent 
+```{bash}
+pip install -r requirements.txt
 ```
 
 ## **Input format**
