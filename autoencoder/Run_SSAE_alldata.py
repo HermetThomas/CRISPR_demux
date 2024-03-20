@@ -68,7 +68,7 @@ def run_SSAE(guidename, Guide, results_dir = None, HTOname = None) :
 
     # Set seed
     Seed = [5]
-    ETA = 100  # Controls feature selection (projection)
+    ETA = 25  # Controls feature selection (projection)
 
     # Set device (Gpu or cpu)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
