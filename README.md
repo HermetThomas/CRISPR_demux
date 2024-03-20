@@ -67,7 +67,7 @@ The different libraries need to contain the same files as the following :
 The files names can contain a common prefix :
 
   * Exp1_CRISPR_matrix.mtx.gz
-  * Exp1_CRSIPR_barcodes.tsv.gz
+  * Exp1_CRISPR_barcodes.tsv.gz
   * Exp1_CRISPR_features.tsv.gz
 
 
