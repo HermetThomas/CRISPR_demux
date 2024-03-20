@@ -233,8 +233,10 @@ def main() :
             #Concatenate the negative control and the perturbded cells counts
             Neg_cut = Neg.iloc[:, :len(target_data.columns)]
             target_data = pd.concat([Neg_cut, target_data], axis=1)
-            #Add the new dataframe to the dictionary
-            data_sep[target] = target_data
+
+            if len(set(target_data.loc['Label'])) == 2 : 
+                #Add the new dataframe to the dictionary
+                data_sep[target] = target_data
         
         print('\nSeparation done')
 
@@ -501,8 +503,10 @@ def main() :
                 target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
                 #Concatenate the negative control and the perturbded cells counts 
                 Neg_cut = Neg.iloc[:, :len(target_data.columns)]
-                target_data = pd.concat([Neg_cut, target_data], axis=1)   
-                data_sep[HTO][target] = target_data
+                target_data = pd.concat([Neg_cut, target_data], axis=1) 
+
+                if len(set(target_data.loc['Label'])) == 2 :
+                    data_sep[HTO][target] = target_data
 
         print('Separation done\n')
 
