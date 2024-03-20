@@ -27,7 +27,7 @@ def get_prefix(path) :
     if len(parts) > 1 :
         return parts[0].strip()
     else :
-        raise ValueError(f"no matrix file in {path}")
+        return ""
 
 def nb_negative_controls() :
     nb = int(input('\nNumber of NEGATIVE CONTROLS among the guides : '))
