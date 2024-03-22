@@ -542,7 +542,6 @@ def main() :
                 print(f"\nProcessing  {htoname}_{guidename}")
                 try :
                     run_SSAE(guidename, Guide, results_dir, htoname)
-                    gene_lists.append(pd.read_csv(f"{results_dir}/{guidename}/{htoname}/proj_l11ball_topGenes_Captum_dl_300.csv", header = 0, sep = ';').Features)
                 except Exception :
                     print(f"error for {htoname}_{guidename} ! Not enough data")
                     import shutil; shutil.rmtree(f"{results_dir}/{guidename}/{htoname}")
