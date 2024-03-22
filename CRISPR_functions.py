@@ -1,11 +1,8 @@
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns 
 from tqdm import tqdm, trange
 import os
 from bioservices import KEGG
-from autoencoder.Run_SSAE_alldata import run_SSAE
 
 
 def dir_path(path : str):
@@ -28,17 +25,6 @@ def get_prefix(path) :
         return parts[0].strip()
     else :
         return ""
-
-def nb_negative_controls() :
-    nb = int(input('\nNumber of NEGATIVE CONTROLS among the guides : '))
-    return nb
-
-negatives = []
-
-def negative_controls(negatives, nb) :
-    control = str(input(f"Name of the negative control n°{nb}"))
-    negatives.append(control)
-    return negatives 
 
 def replace_digit(path, i):
     # Find the index of 'Lib' in the path
@@ -73,38 +59,14 @@ def get_pathway_info(pathway_id):
         return pathway_name[0].split(' - ')[0]
     except Exception :
         return 'No pathway found'
-    
-def select_names(folder) :
-    names = pd.read_csv(folder + 'features.tsv.gz', sep = '\t')
-    cols = ['col' + str(i) for i in range(len(names.columns))]
-    print('\n', names, '\n')
-    col = str(input('\nIndex of the column to select as GENE NAMES (starts from 0) : '))
-    col = 'col' + str(col)
-    names = list(pd.read_csv(folder + 'features.tsv.gz', sep = '\t', names = cols)[col])
-    return names
-
-def select_types(folder) :
-    print(pd.read_csv(folder + 'features.tsv.gz', sep = '\t'))
-    col = int(input('\nIndex of the column to select as GENE TYPES (starts from 0) : '))
-    return col
-
-def negative_controls(guides_list, i) :
-    neg = int(input(f"\nIndex of the negative control n°{i} : "))
-    guides_list[neg] = 'Neg-sg' + str(i)
-
-def rm_targets(targets) :
-    for index, item in enumerate(targets) :
-        print(index, item)
-    target_to_rm = int(input('\nIndex of Target to remove : ')) 
-    targets.remove(targets[target_to_rm])
 
 def find_guides(adata) :
     grna_rows = [index for index, value in enumerate(adata.var.feature_types) if value == 'CRISPR Guide Capture']
-    return [row + 1 for row in grna_rows]
+    return [row for row in grna_rows]
 
 def find_HTOs(adata) :
     HTO_rows = [index for index, value in enumerate(adata.var.feature_types) if value == 'Antibody Capture']
-    return [row + 1 for row in HTO_rows]
+    return [row for row in HTO_rows]
 
 def check_duplicates(input_list):
     seen = {}
@@ -121,7 +83,7 @@ def check_duplicates(input_list):
 
     return result
 
-def clean_guides(guides_list) :
+def clean_guides(guides_list, neg) :
     guides_list = [guide.strip() for guide in guides_list]
     guides_list = [guide.split('-')[0] for guide in guides_list]
     guides_list = [guide.split('_')[0] for guide in guides_list]
@@ -129,34 +91,31 @@ def clean_guides(guides_list) :
     #Remove poly-A tail sequence in the guides names
     guides_list = check_duplicates(guides_list)
 
-    for index, item in enumerate(guides_list) :
-        print(index, item)
-    nb = int(input('\nNumber of negative controls in the list : '))
-    for i in range(nb) :
-        i+=1
-        negative_controls(guides_list, i)
+    if neg == None :
+        for index, item in enumerate(guides_list) :
+            print(index, item)
+        neg = input('index of the negative controls (separated by a space) :')
+        for idx in neg.split() :
+            idx = int(idx)
+            guides_list[idx] = f"Neg-sg{idx}"
+    
+    else :
+        for neg in neg :
+            for i in range(len(guides_list)) :
+                if neg in guides_list[i] : 
+                    guides_list[i] = f"Neg-sg{i}"
 
     targets = [guide.split('-')[0] for guide in guides_list]
-
     targets = [target for target in targets if 'Neg' not in target]
     targets = [target for target in targets if 'unmapped' not in target]
-
-    targets = list(set(targets))
-
-    #Remove guides you do not want to analyze
-    for index, item in enumerate(targets) :
-        print(index, item)
-    remove = int(input('\nNumber of targets to remove for classification : '))
-    if remove > 0 :
-        for i in range(remove) :
-            rm_targets(targets) 
+    targets = list(set(targets)) 
 
     return guides_list, targets
 
 
 def results_files(results_dir, HTO = True, pathways = False) :
 
-    perturbed_cells = pd.DataFrame(columns = ['Condition', 'Perturbed'])
+    perturbed_cells = pd.DataFrame(columns = ['Condition', 'Precision'])
 
     folders = os.listdir(results_dir)
 
@@ -167,11 +126,12 @@ def results_files(results_dir, HTO = True, pathways = False) :
                 pass
 
             else :
-                htos = os.listdir(f"{results_dir}/{target}")
+                htos = sorted(os.listdir(f"{results_dir}/{target}"))
                 colors = ['dimgray', 'indianred', 'sienna', 'sandybrown', 'goldenrod', 'darkkhaki', 'olive', 'lightgreen', 'seagreen']
                 _, axes = plt.subplots(nrows=1, ncols=4, figsize=(21, 11))
                 i = 0
-                for hto in htos :
+                target_scores = []
+                for hto in htos :                    
 
                     if hto == "top_genes.png" :
                         pass
@@ -187,11 +147,12 @@ def results_files(results_dir, HTO = True, pathways = False) :
 
                         predictions =  pd.read_csv(f"{results_dir}/{target}/{hto}/Labelspred_softmax.csv", sep = ';', header = 0)   
                         predictions.columns = ['Name', 'Label', 'Proba_Class0', 'Proba_Class1']
-                        predictions = predictions[predictions.Label == 1]  
-                        
-                        percentage_ones = len(predictions[predictions.Proba_Class1 > 0.5]) / len(predictions) * 100
-
-                        new_row = {'Condition' : f"{target}_{hto}", 'Perturbed' : str(percentage_ones) + ' % perturbded cells' }
+                        pos = predictions[predictions.Proba_Class1 > 0.5]
+                        true_pos = pos[pos.Label == 1]
+                        false_pos = pos[pos.Label == 0]
+                        precision = len(true_pos) / (len(true_pos) + len(false_pos))
+                        target_scores.append(precision)
+                        new_row = {'Condition' : f"{target}_{hto}", 'Precision' : f"{precision} % precision" }
                         perturbed_cells.loc[len(perturbed_cells)] = new_row
 
                         genes_info = pd.DataFrame(columns = ['Gene', 'Pathways'])
@@ -208,7 +169,7 @@ def results_files(results_dir, HTO = True, pathways = False) :
                                 pathways_list = []
 
                                 if pathways_info:
-                                    for pathway in pathways:
+                                    for pathway in pathways_info:
                                         pathway_description = get_pathway_info(pathway)
                                         pathways_list.append(pathway_description)
                                         
@@ -220,8 +181,11 @@ def results_files(results_dir, HTO = True, pathways = False) :
                     plt.suptitle(f"Most discriminant Features for {target}", fontsize = 30)
                     plt.tight_layout()
                     plt.savefig(f"{results_dir}/{target}/top_genes.png")
-                    
-
+                
+                mean_target = sum(target_scores) / len(target_scores)        
+                new_row = {'Condition' : f"ALL {target}", 'Precision' : f"{mean_target}  % mean precision"} 
+                perturbed_cells.loc[len(perturbed_cells)] = new_row
+                perturbed_cells.loc[len(perturbed_cells)] = {'Condition' : "----", 'Precision' : "----"}
         perturbed_cells.to_csv(f"{results_dir}/perturbed_cells.csv", index = False, sep = ';')
 
     else :
@@ -272,11 +236,10 @@ def results_files(results_dir, HTO = True, pathways = False) :
                 classification = pd.read_csv(f"{results_dir}{target}/Labelspred_softmax.csv", sep = ';')
                 classification.columns = ['Name', 'Label', 'Proba_Class0', 'Proba_Class1']
 
-                classification = classification[classification.Label == 1]
-                positives = len(classification)
-                perturbed = len(classification[classification.Proba_Class1 > 0.5])
-                percent_pos = perturbed/positives * 100
-
-                perturbed_cells.loc[len(perturbed_cells)] = {'Condition':target, 'Perturbed':f"{percent_pos} % perturbed cells"}
+                pos = classification[classification.Proba_Class1 > 0.5]
+                true_pos = pos[pos.Label == 1]
+                false_pos = pos[pos.Label == 0]
+                precision = len(true_pos) / (len(true_pos)+len(false_pos))
+                perturbed_cells.loc[len(perturbed_cells)] = {'Condition':target, 'Precision':f"{true_pos} % mean precision"}
         perturbed_cells.to_csv(f"{results_dir}/perturbed_cells.csv", index = False, sep = ';')
             
