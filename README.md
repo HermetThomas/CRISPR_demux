@@ -25,9 +25,10 @@ David Chardin, Cyprien Gille, Thierry Pourcher and Michel Barlaud : *Accurate Di
 ## **Repository Content**
 |File/Folder|Description|
 |:-:|:-:|
-|CRISPR_demux.py|Main script to launch|
-|CRISPR_functions.py|Definition of functions used in the main script|
 |autoencoder/|Contains the AutoEncoder sript and functions it calls|
+|CRISPR_demux.py|Main script to launch|
+|CRISPR_env.yml|Conda environment in which the script is launched|
+|CRISPR_functions.py|Definition of functions used in the main script|
 |requirements.txt|Python packages required to run the script|
 
 ## **Installation**
