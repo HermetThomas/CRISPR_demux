@@ -35,14 +35,15 @@ def main() :
         formatter_class=argparse.MetavarTypeHelpFormatter,
         description = 'Detects HTO and gRNA present in each cell and creates a classification dataframe')
     
-    parser.add_argument('-libs', type = int, help = 'Number of libraries', default = 1)
+    parser.add_argument('-libs', type = int, help = 'Number of libraries to treat at the same time', default = 1)
     parser.add_argument('-counts', type = dir_path, help = 'Path/to/counts/library_1/', required = True)
     parser.add_argument('-grna', type = dir_path, help = 'Path/to/gRNA/library_1/')
     parser.add_argument('-hto', type = dir_path, help = 'Path/to/hto/library_1/')
-    parser.add_argument('-plot', action='store_true', help = 'Add -plot to save gRNA and HTO distribution plots', default = False)
+    parser.add_argument('-plot', action='store_true', help = 'Add -plot to save demultiplexing distribution plots', default = False)
     parser.add_argument('-nohto', action='store_true', help = 'Add -nohto i you do not have HTO to demultiplex in yout dataset', default = False)
     parser.add_argument('-pathways', action='store_true', help = 'Add -pathways if you want to find pathways associated to te top genes', default = False)
-    parser.add_argument('-sep', type = str, help = 'Separation used to index guides names  e.g :  - / _  : ', default = '-')
+    parser.add_argument('-priors', nargs = '+', type =float, help = 'Define priors for gRNA negatives, singlets and doublets ratio', default = [0.01, 0.8, 0.19])
+    parser.add_argument('-neg', nargs = '+', type =str, help = 'Name of negative control gRNAs', default = None)
 
     args = parser.parse_args()
 
@@ -52,7 +53,7 @@ def main() :
         gfolder = args.grna
         features_file = next((file for file in os.listdir(gfolder) if 'features' in file), None)
         grna_names = list(pd.read_csv(gfolder + features_file, sep = '\t', names = ['Names']).Names)
-        grna_names, targets = clean_guides(grna_names)
+        grna_names, targets = clean_guides(grna_names, args.neg)
 
     if args.hto :
         hfolder = args.hto
@@ -68,7 +69,7 @@ def main() :
 
             folder = replace_digit(cfolder, i)
             prefix = get_prefix(folder)
-            matrix = sc.read_10x_mtx(folder, prefix=prefix, cache_compression='gzip')
+            matrix = sc.read_10x_mtx(folder, prefix=prefix, cache_compression='gzip', gex_only=False)
             matrix.obs_names = [barcode.split('-')[0] + f"-{i}" for barcode in matrix.obs_names]
             sc.pp.normalize_total(matrix, target_sum=1e6)
             counts_matrices[f"matrix_{i}"] = matrix
@@ -76,7 +77,7 @@ def main() :
     elif args.libs == 1 :
         print('\nLoading counts matrix')
         prefix = get_prefix(cfolder)
-        counts_adata = sc.read_10x_mtx(cfolder, prefix=prefix, cache_compression='gzip')
+        counts_adata = sc.read_10x_mtx(cfolder, prefix=prefix, cache_compression='gzip', gex_only=False)
         sc.pp.normalize_total(counts_adata, target_sum=1e6)
         counts_adata.obs.index = [barcode.split('-')[0] for barcode in counts_adata.obs.index]
 
@@ -104,27 +105,31 @@ def main() :
                     barcodes = list(pd.read_csv(folder + barcodes_file, sep = '\t', names = ['Barcode']).Barcode)
                     matrix.obs.index = [barcode.split('-')[0] + f"-{i}" for barcode in barcodes]
 
-                    matrix.obs = matrix.obs.set_index(counts_matrices[matrix_name].obs.index)
+                    #matrix.obs = matrix.obs.set_index(counts_matrices[matrix_name].obs.index)
 
                     matrix.obs = matrix.to_df().astype(int)
                     matrix.obs.columns = grna_names
 
                     matrix = matrix[matrix.obs.sum(axis=1) > 0]
 
-                    hashsolo(matrix, grna_names)
+                    hashsolo(matrix, grna_names, priors=args.priors)
 
                     counts_matrices[matrix_name].obs['Classif_gRNA'] = matrix.obs['Classification']
 
                 else :
                     grna_rows = find_guides(counts_matrices[f"matrix_{i}"])
-                    grna_names = [counts_matrices[f"matrix_{i}"].var_names[i] for i in grna_rows]
+                    grna_names = [counts_matrices[f"matrix_{i}"].var_names[row] for row in grna_rows]
+                    grna_names, targets = clean_guides(grna_names, args.neg)
                     for row, name in zip(grna_rows, grna_names) :
-                        counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].astype(int)
+                        if hasattr(counts_matrices[f"matrix_{i}"].X, 'toarray') :
+                            counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].A.ravel().astype(int)
+                        else :
+                            counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].astype(int)
 
                     counts_matrices[f"matrix_{i}"] = counts_matrices[f"matrix_{i}"][:, ~counts_matrices[f"matrix_{i}"].var_names.isin(grna_names)]
                     counts_matrices[f"matrix_{i}"] = counts_matrices[f"matrix_{i}"][counts_matrices[f"matrix_{i}"].obs.sum(axis=1) > 0]
 
-                    hashsolo(counts_matrices[f"matrix_{i}"], grna_names)
+                    hashsolo(counts_matrices[f"matrix_{i}"], grna_names, priors=args.priors)
 
                     counts_matrices[f"matrix_{i}"].obs.rename(columns={'Classification' : 'Classif_gRNA'}, inplace = True)
             
@@ -142,28 +147,32 @@ def main() :
                 barcodes = list(pd.read_csv(gfolder + barcodes_file, sep = '\t', names = ['Barcode']).Barcode)
                 grna_adata.obs.index = [barcode.split('-')[0] for barcode in barcodes]
 
-                grna_adata.obs = grna_adata.obs.set_index(counts_adata.obs.index)
+                #grna_adata.obs = grna_adata.obs.set_index(counts_adata.obs.index)
 
                 grna_adata.obs = grna_adata.to_df()
                 grna_adata.obs.columns = grna_names
 
                 grna_adata = grna_adata[grna_adata.obs.sum(axis=1) > 0]
 
-                hashsolo(grna_adata, grna_names)
+                hashsolo(grna_adata, grna_names, priors=args.priors)
 
                 counts_adata.obs['Classif_gRNA'] = grna_adata.obs['Classification']  
 
             else :
 
                 grna_rows = find_guides(counts_adata)
-                grna_names = [counts_adata.var_names[i] for i in grna_rows]
+                grna_names = [counts_adata.var_names[row] for row in grna_rows]
+                grna_names, targets = clean_guides(grna_names, args.neg)
                 for row, name in zip(grna_rows, grna_names) :
-                    counts_adata.obs[name] = counts_adata.X[:, row].astype(int)
+                    if hasattr(counts_matrices[f"matrix_{i}"].X, 'toarray') :
+                        counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].A.ravel().astype(int)
+                    else :
+                        counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].astype(int)
 
                 counts_adata = counts_adata[:, ~counts_adata.var_names.isin(grna_names)]
                 counts_adata = counts_adata[counts_adata.obs.sum(axis=1) > 0]
 
-                hashsolo(counts_adata, grna_names)
+                hashsolo(counts_adata, grna_names, priors=args.priors)
 
                 counts_adata.obs.rename(columns={'Classification' : 'Classif_gRNA'}, inplace = True)
         
@@ -230,12 +239,10 @@ def main() :
             #Add the label 1 for 'perturbed' for each cell in the dataframe
             target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
             target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
-            #Concatenate the negative control and the perturbded cells counts
-            Neg_cut = Neg.iloc[:, :len(target_data.columns)]
-            target_data = pd.concat([Neg_cut, target_data], axis=1)
-
-            if len(set(target_data.loc['Label'])) == 2 : 
-                #Add the new dataframe to the dictionary
+            if len(target_data.columns) > 0 and len(Neg.columns) > 0 :
+                #Concatenate the negative control and the perturbded cells counts
+                Neg_cut = Neg.iloc[:, :len(target_data.columns)]
+                target_data = pd.concat([Neg_cut, target_data], axis=1)
                 data_sep[target] = target_data
         
         print('\nSeparation done')
@@ -246,10 +253,13 @@ def main() :
 
         for target_name, target in data_sep :
             print(f"\nProcessing {target_name}")
+            try :
+                run_SSAE(target_name, target, results_dir)
+            except Exception :
+                print(f"error for {target_name} ! Not enough data")
+                import shutil; shutil.rmtree(f"{results_dir}/{target_name}")
+                pass
 
-            run_SSAE(target_name, target, results_dir)
-
-    
         ########################################
         #Analysis of the Classification results#       
         ########################################     
@@ -281,7 +291,7 @@ def main() :
                     barcodes = list(pd.read_csv(folder + barcodes_file, sep = '\t', names = ['Barcode']).Barcode)
                     matrix.obs.index = [barcode.split('-')[0] + f"-{i}" for barcode in barcodes]
 
-                    matrix.obs = matrix.obs.set_index(counts_matrices[matrix_name].obs.index)
+                    #matrix.obs = matrix.obs.set_index(counts_matrices[matrix_name].obs.index)
 
                     matrix.obs = matrix.to_df().astype(int)
                     matrix.obs.columns = hto_names
@@ -294,9 +304,12 @@ def main() :
 
                 else :
                     hto_rows = find_HTOs(counts_matrices[f"matrix_{i}"])
-                    hto_names = [counts_matrices[f"matrix_{i}"].var_names[i] for i in hto_rows]
+                    hto_names = [counts_matrices[f"matrix_{i}"].var_names[row] for row in hto_rows]
                     for row, name in zip(hto_rows, hto_names) :
-                        counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].astype(int)
+                        if hasattr(counts_matrices[f"matrix_{i}"].X, 'toarray') :
+                            counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].A.ravel().astype(int)
+                        else :
+                            counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].astype(int)
 
                     counts_matrices[f"matrix_{i}"] = counts_matrices[f"matrix_{i}"][:, ~counts_matrices[f"matrix_{i}"].var_names.isin(hto_names)]
                     counts_matrices[f"matrix_{i}"] = counts_matrices[f"matrix_{i}"][counts_matrices[f"matrix_{i}"].obs.sum(axis=1) > 0]
@@ -320,27 +333,31 @@ def main() :
                     barcodes = list(pd.read_csv(folder + barcodes_file, sep = '\t', names = ['Barcode']).Barcode)
                     matrix.obs.index = [barcode.split('-')[0] + f"-{i}" for barcode in barcodes]
 
-                    matrix.obs = matrix.obs.set_index(counts_matrices[matrix_name].obs.index)
+                    #matrix.obs = matrix.obs.set_index(counts_matrices[matrix_name].obs.index)
 
                     matrix.obs = matrix.to_df().astype(int)
                     matrix.obs.columns = grna_names
 
                     matrix = matrix[matrix.obs.sum(axis=1) > 0]
 
-                    hashsolo(matrix, grna_names)
+                    hashsolo(matrix, grna_names, priors=args.priors)
 
                     counts_matrices[matrix_name].obs['Classif_gRNA'] = matrix.obs['Classification']    
 
                 else :
                     grna_rows = find_guides(counts_matrices[f"matrix_{i}"])
-                    grna_names = [counts_matrices[f"matrix_{i}"].var_names[i] for i in grna_rows]
+                    grna_names = [counts_matrices[f"matrix_{i}"].var_names[row] for row in grna_rows]
+                    grna_names, targets = clean_guides(grna_names, args.neg)
                     for row, name in zip(grna_rows, grna_names) :
-                        counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].astype(int)
+                        if hasattr(counts_matrices[f"matrix_{i}"].X, 'toarray') :
+                            counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].A.ravel().astype(int)
+                        else :
+                            counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].astype(int)
 
                     counts_matrices[f"matrix_{i}"] = counts_matrices[f"matrix_{i}"][:, ~counts_matrices[f"matrix_{i}"].var_names.isin(grna_names)]
                     counts_matrices[f"matrix_{i}"] = counts_matrices[f"matrix_{i}"][counts_matrices[f"matrix_{i}"].obs.sum(axis=1) > 0]
 
-                    hashsolo(counts_matrices[f"matrix_{i}"], grna_names)
+                    hashsolo(counts_matrices[f"matrix_{i}"], grna_names, priors=args.priors)
 
                     counts_matrices[f"matrix_{i}"].obs.rename(columns={'Classification' : 'Classif_gRNA'}, inplace = True)
             
@@ -357,7 +374,7 @@ def main() :
                 barcodes = list(pd.read_csv(hfolder + barcodes_file, sep = '\t', names = ['Barcode']).Barcode)
                 hto_adata.obs.index = [barcode.split('-')[0] for barcode in barcodes]
                 counts_adata = counts_adata[counts_adata.obs.index.isin(hto_adata.obs.index)]
-                hto_adata.obs = hto_adata.obs.set_index(counts_adata.obs.index)
+                #hto_adata.obs = hto_adata.obs.set_index(counts_adata.obs.index)
 
                 hto_adata.obs = hto_adata.to_df().astype(int)
                 hto_adata.obs.columns = hto_names
@@ -370,9 +387,12 @@ def main() :
 
             else :
                 hto_rows = find_HTOs(counts_adata)
-                hto_names = [counts_adata.var_names[i] for i in hto_rows]
+                hto_names = [counts_adata.var_names[row] for row in hto_rows]
                 for row, name in zip(hto_rows, hto_names) :
-                    counts_adata.obs[name] = counts_adata.X[:, row].astype(int)
+                    if hasattr(counts_adata.X, 'toarray') :
+                        counts_adata.obs[name] = counts_adata.X[:, row].A.ravel().astype(int)
+                    else :
+                        counts_adata.obs[name] = counts_adata.X[:, row].astype(int)
 
                 counts_adata = counts_adata[:, ~counts_adata.var_names.isin(hto_names)]
                 counts_adata = counts_adata[counts_adata.obs.sum(axis=1) > 0]
@@ -393,27 +413,31 @@ def main() :
                 grna_adata.obs.index = [barcode.split('-')[0] for barcode in barcodes]
 
                 grna_adata = grna_adata[grna_adata.obs.index.isin(counts_adata.obs.index)]
-                grna_adata.obs = grna_adata.obs.set_index(counts_adata.obs.index)
+                #grna_adata.obs = grna_adata.obs.set_index(counts_adata.obs.index)
 
                 grna_adata.obs = grna_adata.to_df().astype(int)
                 grna_adata.obs.columns = grna_names
 
                 grna_adata = grna_adata[grna_adata.obs.sum(axis=1) > 0]
 
-                hashsolo(grna_adata, grna_names)
+                hashsolo(grna_adata, grna_names, priors=args.priors)
 
                 counts_adata.obs['Classif_gRNA'] = grna_adata.obs['Classification'] 
             
             else :
                 grna_rows = find_guides(counts_adata)
-                grna_names = [counts_adata.var_names[i] for i in grna_rows]
+                grna_names = [counts_adata.var_names[row] for row in grna_rows]
+                grna_names, targets = clean_guides(grna_names, args.neg)
                 for row, name in zip(grna_rows, grna_names) :
-                    counts_adata.obs[name] = counts_adata.X[:, row].astype(int)
+                    if hasattr(counts_matrices[f"matrix_{i}"].X, 'toarray') :
+                        counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].A.ravel().astype(int)
+                    else :
+                        counts_matrices[f"matrix_{i}"].obs[name] = counts_matrices[f"matrix_{i}"].X[:, row].astype(int)
 
                 counts_adata = counts_adata[:, ~counts_adata.var_names.isin(grna_names)]
                 counts_adata = counts_adata[counts_adata.obs.sum(axis=1) > 0]
 
-                hashsolo(counts_adata, grna_names)
+                hashsolo(counts_adata, grna_names, priors=args.priors)
 
                 counts_adata.obs.rename(columns={'Classification' : 'Classif_gRNA'}, inplace = True)
     
@@ -501,28 +525,31 @@ def main() :
                 #Add the label 1 for 'perturbded' for each cell in the dataframe
                 target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
                 target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
-                #Concatenate the negative control and the perturbded cells counts 
-                Neg_cut = Neg.iloc[:, :len(target_data.columns)]
-                target_data = pd.concat([Neg_cut, target_data], axis=1) 
-
-                if len(set(target_data.loc['Label'])) == 2 :
+                if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
+                    Neg_cut = Neg.iloc[:, :len(target_data.columns)]
+                    target_data = pd.concat([Neg_cut, target_data], axis=1)
                     data_sep[HTO][target] = target_data
-
+                else : pass
+                
         print('Separation done\n')
 
         #######################
         #   Run AutoEncoder   #
         #######################
-
+        
         for htoname, HTO in data_sep.items() :
             for guidename, Guide in HTO.items() :
                 print(f"\nProcessing  {htoname}_{guidename}")
+                try :
+                    run_SSAE(guidename, Guide, results_dir, htoname)
+                    gene_lists.append(pd.read_csv(f"{results_dir}/{guidename}/{htoname}/proj_l11ball_topGenes_Captum_dl_300.csv", header = 0, sep = ';').Features)
+                except Exception :
+                    print(f"error for {htoname}_{guidename} ! Not enough data")
+                    import shutil; shutil.rmtree(f"{results_dir}/{guidename}/{htoname}")
+                    pass
+                    
+            results_files(results_dir, pathways = args.pathways)
 
-                run_SSAE(guidename, Guide, results_dir, htoname)
-
-    
-        results_files(results_dir, pathways = args.pathways)
-        
         end = time.time()
 
         hours, rem = divmod(end-start, 3600)
@@ -531,4 +558,4 @@ def main() :
 
 
 if __name__ == "__main__" :
-    main()    
+    main()      
