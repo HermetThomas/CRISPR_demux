@@ -66,7 +66,7 @@ Example :
    * gRNA_UMI_Lib1_06-24/
    * gRNA_UMI_Lib2_06-24/ 
    * HTO_Lib1_03-04-2024_01/
-   * HTO_Lib2_03-04-2024_02/
+   * HTO_Lib2_03-04-2024_01/
 
 The different libraries need to contain the same files as the following :
 
