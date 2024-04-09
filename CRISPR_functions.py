@@ -273,7 +273,7 @@ def make_pchip_graph(x, y, npoints=300):
     plt.plot(xnew, yfit)
     return (xnew, yfit)
 
-def eta_fig(dataframe) :
+def eta_fig(dataframe, results_dir) :
 
     dataframe.index = [condition.strip() for condition in dataframe.index]
     conditions = list(dataframe.index)
@@ -329,5 +329,5 @@ def eta_fig(dataframe) :
         plt.legend()
         parts = condition.split('/')
         # Show the plot
-        plt.savefig(f'/data/data_hermet/CRISPR_demux/autoencoder/results_stat/results_016/{parts[0]}/ETA_curve_{parts[1]}.png')
+        plt.savefig(f'{results_dir}/{parts[0]}/ETA_curve_{parts[1]}.png')
         plt.close()
