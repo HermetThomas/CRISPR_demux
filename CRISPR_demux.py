@@ -1,19 +1,24 @@
 print('\nLoading packages')
 import pandas as pd
 import numpy as np
+import math
+from scipy import interpolate
 import scanpy as sc; sc.settings.verbosity = 0
 from scanpy.external.pp import hashsolo
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import trange, tqdm
 import os
+import shutil
 import anndata as ad
 import argparse
 import time
+from itertools import product
+from functools import reduce
 from scipy.sparse import issparse
 from bioservices import KEGG
 from CRISPR_functions import *
-from autoencoder.Run_SSAE_alldata import run_SSAE
+from autoencoder.Run_SSAE_alldata import run_SSAE, new_SSAE
 
 start = time.time()
 
@@ -49,13 +54,15 @@ def main() :
     parser.add_argument('-libs', type = int, help = 'Number of libraries to treat at the same time', default = 1)
     parser.add_argument('-counts', type = dir_path, help = 'Path/to/counts/library_1/', required = True)
     parser.add_argument('-grna', type = dir_path, help = 'Path/to/gRNA/library_1/')
-    parser.add_argument('-hto', type = dir_path, help = 'Path/to/hto/library_1/')
-    parser.add_argument('-plot', action='store_true', help = 'Add -plot to save demultiplexing distribution plots', default = False)
+    parser.add_argument('-hto', type = dir_path, help = 'Path/to/hto/library_1/') 
     parser.add_argument('-nohto', action='store_true', help = 'Add -nohto i you do not have HTO to demultiplex in yout dataset', default = False)
-    parser.add_argument('-pathways', action='store_true', help = 'Add -pathways if you want to find pathways associated to te top genes', default = False)
     parser.add_argument('-priors', nargs = '+', type =float, help = 'Define priors for gRNA negatives, singlets and doublets ratio', default = [0.01, 0.8, 0.19])
     parser.add_argument('-neg', nargs = '+', type =str, help = 'Name of negative control gRNAs', default = None)
-
+    parser.add_argument('-runs', type = int, help = 'Number of random samplings and AutoEncoder runs to perform', default = 1)
+    parser.add_argument('-eta', action='store_true', help = 'Test multiple eta values to get highest accuracy', default = False)
+    parser.add_argument('-plot', action='store_true', help = 'Add -plot to save demultiplexing distribution plots', default = False)
+    parser.add_argument('-pathways', action='store_true', help = 'Add -pathways if you want to find pathways associated to te top genes', default = False)
+    
     args = parser.parse_args()
 
     cfolder = args.counts
@@ -220,10 +227,7 @@ def main() :
                 hashsolo(counts_adata, grna_names, priors=args.priors)
 
                 counts_adata.obs.rename(columns={'Classification' : 'Classif_gRNA'}, inplace = True)
-        
-        #Create a directory to store the results  
-        results_dir = create_results_folder()
-        
+                
         if args.plot :
 
             distrib_dir = f"{results_dir}/Distribution_plots/"
@@ -250,12 +254,13 @@ def main() :
             plt.ylabel('Count')
             plt.title('Distribution of gRNA classification by Hashsolo')
             plt.savefig(f"{distrib_dir}gRNA_distribution.png")
-        
+
         #Remove the doublets, negatives and unmapped reads
         counts_adata = counts_adata[counts_adata.obs.Classification.isin(grna_names)]
         counts_adata.obs.index = counts_adata.obs.Barcode
         #Keep only the classification in .obs
         counts_adata.obs = counts_adata.obs[['Classification']]
+        counts_adata.obs.rename(columns={'Classification' : 'Classif_gRNA'}, inplace = True)
 
         print('\nSelecting 10k most expressed genes')
         #Select the 10,000 most expressed genes in the counts matrix to reduce the computational cost
@@ -271,54 +276,162 @@ def main() :
             'ExpressionSum': gene_counts_array_1d
         })
         
-        #Sor the genes by descending counts sum
+        #Sort the genes by descending counts sum
         sorted_genes = gene_expression_df.sort_values(by='ExpressionSum', ascending=False)
         #Store the names of the 10,000 most expressed genes in a list 
         top_10k_genes = sorted_genes.head(10000)['Gene'].tolist()
         #Select the rows corresponding to the 10,000 most expressed genes from the counts matrix
         top10k =counts_adata[:, counts_adata.var_names.isin(top_10k_genes)].copy()    
 
-        print('\nSeparating the data by gRNA target')
+        list_ETA = [0.05,0.1,0.5,1]
+        allresults = {}
+        expression = {}
+        accuracies = {}
+        conditions = []
 
-        data_sep = {}
-
+        for condition in targets :
+            allresults[condition] = []
+            expression[condition] = []
+            accuracies[condition] = []
+            conditions.append(condition)
+        
+        acc_df = pd.DataFrame(columns=[f'eta_{ETA}' for ETA in list_ETA])
+        
         #Take the cells with non-targeting gRNA as negative control
-        Neg = top10k[top10k.obs['Classification'].str.contains('Neg')].to_df().T
+        Neg = top10k[top10k.obs['Classif_gRNA'].str.contains('Neg')].to_df().T
         #Add the label 0 for 'control cell' for each cell in the dataframe
         Neg.loc['Label'] = pd.Series(np.zeros(len(Neg.columns)), index=Neg.columns)
         Neg = pd.concat([Neg.loc[['Label']], Neg.drop('Label')])
 
-        for target in tqdm(targets) :
-            target_data = top10k[top10k.obs['Classification'].str.contains(target)].to_df().T
-            #Add the label 1 for 'perturbed' for each cell in the dataframe
-            target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
-            target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
-            if len(target_data.columns) > 0 and len(Neg.columns) > 0 :
-                #Concatenate the negative control and the perturbded cells counts
-                Neg_cut = Neg.iloc[:, :len(target_data.columns)]
-                target_data = pd.concat([Neg_cut, target_data], axis=1)
-                data_sep[target] = target_data
+        if args.eta :
+            for target in targets : 
+                target_data = top10k[top10k.obs['Classif_gRNA'].str.contains(target)].to_df().T
+                #Add the label 1 for 'perturbded' for each cell in the dataframe
+                target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
+                target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
+                if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
+                    #Concatenate the negative control and the perturbed cells counts
+                    Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=0)
+                    target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=0)
+                    dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
+                    
+                    list_acc = []
+                    for ETA in list_ETA :
+                        try :
+                            new_SSAE(target, dataset, results_dir, eta=ETA)
+                            list_acc.append(pd.read_csv(f'{results_dir}/{target}/bilevel_proj_l1Inftyball_acctest.csv', header=0, index_col=0, sep=';').Global.loc['Mean'])
+                            if args.runs >= 1 :
+                                shutil.rmtree(f"{results_dir}/{target}")
+                            else :
+                                if ETA != list_ETA[-1] :
+                                    shutil.rmtree(f"{results_dir}/{target}")
+                            
+                        except Exception :
+                            print(f"Error for {target}_{HTO} ! Not enough data")
+                            shutil.rmtree(f"{results_dir}/{target}")
+                            pass
+
+                    
+                    acc_df.loc[target] = list_acc
+                    acc_df.to_csv(f'{results_dir}/accuracies.csv')
+
+                else : pass
+
+            eta_fig(acc_df)
+                
+            acc_df = pd.concat([acc_df, pd.DataFrame(acc_df.idxmax(axis=1).value_counts()).T])
+            acc_df.to_csv(f'{results_dir}/accuracies.csv')
+
+        if args.runs>1 :
+            for run in range(args.runs) :
+                for target in targets : 
+                    target_data = top10k[top10k.obs['Classif_gRNA'].str.contains(target)].to_df().T
+                    #Add the label 1 for 'perturbded' for each cell in the dataframe
+                    target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
+                    target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
+                    if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
+                        #Concatenate the negative control and the perturbed cells counts
+                        Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                        target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                        dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
+                        target
+                        genes = Neg.index.to_list()[1:]
+                        neg_exp = Neg.iloc[1:, :].mean(axis=1)
+                        pert_exp = target_data.iloc[1:, :].mean(axis=1)
+                        expression_df = pd.DataFrame({'Gene' : genes, 'Perturbed_expression' : pert_exp, 'Control_expression' : neg_exp})
+                        expression_df['log2_ratio'] = np.log2(expression_df['Perturbed_expression'] / expression_df['Control_expression'])
+                        expression[target].append(expression_df)
+                        
+                        if run != args.runs-1 :
+                            try :
+                                if args.eta :
+                                    new_SSAE(target, dataset, results_dir, HTO, eta=float(acc_df.loc[target].idxmax().split('_')[-1]))
+                                else :
+                                    new_SSAE(target, dataset, results_dir, HTO, eta=0.25)
+                                scores = pd.read_csv(f'{results_dir}/{target}/bilevel_proj_l1Inftyball_topGenes_Captum_dl_300.csv', header=0, sep=';')[['Features', 'Mean']]
+                                scores['Rank'] = scores.index + 1
+                                allresults[target].append(scores)
+                                if run != args.runs-1 :
+                                    shutil.rmtree(f"{results_dir}/{target}")
+                            except Exception :
+                                print(f"Error for {target}_{HTO} ! Not enough data")
+                                shutil.rmtree(f"{results_dir}/{target}")
+                                pass
         
-        print('\nSeparation done')
+            for condition in tqdm(targets) :
 
-        #######################
-        #   Run AutoEncoder   #
-        #######################
+                if allresults[condition] and expression[condition]:
+                    results1=allresults[condition][0]
 
-        for target_name, target in data_sep :
-            print(f"\nProcessing {target_name}")
-            try :
-                run_SSAE(target_name, target, results_dir)
-            except Exception :
-                print(f"error for {target_name} ! Not enough data")
-                import shutil; shutil.rmtree(f"{results_dir}/{target_name}")
-                pass
+                    for idx, results in enumerate(allresults[condition]) :
+                        results.index.name = 'Features'
+                        if idx != 0 :
+                            results = results.reindex(allresults[condition][0].index)                        
+                        
+                    df = pd.DataFrame({'Gene' : results1['Features'], 
+                                    'Mean_Weight' : pd.concat(allresults[condition], axis=1)['Mean'].mean(axis=1),
+                                    'Weight_Std' : pd.concat(allresults[condition], axis=1)['Mean'].std(axis=1),
+                                    'Mean_Rank' : pd.concat(allresults[condition], axis=1)['Rank'].mean(axis=1),
+                                    'Rank_Std' : pd.concat(allresults[condition], axis=1)['Rank'].std(axis=1)})
+                    df = df.sort_values(by='Mean_Rank')
+                    df.index.name = 'Gene'
 
-        ########################################
-        #Analysis of the Classification results#       
-        ########################################     
+                    import ipdb; ipdb.set_trace()
+                    df2 = pd.DataFrame({'Gene' : expression[condition][0]['Gene'].to_list(), 
+                                        'log2_ratio' : pd.concat(expression[condition], axis=1)['log2_ratio'].mean(axis=1)})
+                    df2.index.name='Gene'
+                    df2 = df2.reindex(df.index)
+                    df['log2_ratio'] = df2['log2_ratio']
+                    df.index.name = 'Gene'
+                    parts 
+                    df.to_csv(f'{ranks_dir}/{condition}.csv', index = True)   
+                else :
+                    pass 
         
-        results_files(results_dir, HTO = False, pathways = args.pathways)
+        else : 
+
+            for target in targets : 
+                target_data = top10k[top10k.obs['Classif_gRNA'].str.contains(target)].to_df().T
+                #Add the label 1 for 'perturbded' for each cell in the dataframe
+                target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
+                target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
+                if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
+                    #Concatenate the negative control and the perturbed cells counts
+                    Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                    target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                    dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
+                    if run != args.runs-1 :
+                        try :
+                            if args.eta :
+                                new_SSAE(target, dataset, results_dir, eta=float(acc_df.loc[target].idxmax().split('_')[-1]))
+                            else :
+                                new_SSAE(target, dataset, results_dir, eta=0.25)
+                        except Exception :
+                            print(f"Error for {target}_{HTO} ! Not enough data")
+                            shutil.rmtree(f"{results_dir}/{target}")
+                            pass
+
+        results_files(results_dir, targets, pathways = args.pathways)       
 
         end = time.time()
         hours, rem = divmod(end-start, 3600)
@@ -529,8 +642,8 @@ def main() :
 
                 hashsolo(counts_adata, grna_names, priors=args.priors)
 
-                counts_adata.obs.rename(columns={'Classification' : 'Classif_gRNA'}, inplace = True)
-    
+                counts_adata.obs.rename(columns={'Classification' : 'Classif_gRNA'}, inplace = True)        
+
         results_dir = create_results_folder()
 
         if args.plot == True :
@@ -560,6 +673,7 @@ def main() :
             plt.ylabel('Count')
             plt.title('Distribution of HTO classification by Hashsolo')
             plt.savefig(distrib_dir + 'HTO_distribution.png') 
+            plt.close()
 
             #Plot the ditribution of gRNA Classification
             plt.figure(figsize=(25, 9))
@@ -574,11 +688,11 @@ def main() :
             plt.ylabel('Count')
             plt.title('Distribution of gRNA classification by Hashsolo')
             plt.savefig(f"{distrib_dir}gRNA_distribution.png")
-
-
+            plt.close()
+        
         #Keep only the classifications in .obs
+        
         counts_adata.obs = counts_adata.obs[['Classif_HTO', 'Classif_gRNA']]
-
         #Remove 'unmapped' from the list of HTO names
         if 'unmapped' in hto_names :
             hto_names.remove('unmapped')
@@ -599,54 +713,182 @@ def main() :
         sorted_genes = gene_expression_df.sort_values(by='ExpressionSum', ascending=False)
         top10k = counts_adata[:, counts_adata.var_names.isin(sorted_genes.head(10000)['Gene'].tolist())].copy()
 
-        print('\nSeparating the data by HTO and gRNA target')
+        list_ETA = [0.05,0.1,0.5,1]
+        allresults = {}
+        expression = {}
+        accuracies = {}
+        conditions = []
 
-        #Separate the cells according to their condition (HTO)
-        #Make a subdataset for each HTO
-        data_sep = {}
-
-        for HTO in hto_names :
-            #Select all the cells with the HTO
-            full_HTO = top10k[top10k.obs['Classif_HTO'].str.contains(HTO)]
-            #Make a subdataset for each target gene 
-            data_sep[HTO] = {}
-            #Take the cells with non-targeting gRNA as negative control
-            Neg = full_HTO[full_HTO.obs['Classif_gRNA'].str.contains('Neg')].to_df().T
-            #Add the label 0 for 'control cell' for each cell in the dataframe
-            Neg.loc['Label'] = pd.Series(np.zeros(len(Neg.columns)), index=Neg.columns)
-            Neg = pd.concat([Neg.loc[['Label']], Neg.drop('Label')])
-
-            for target in targets : 
-                target_data = full_HTO[full_HTO.obs['Classif_gRNA'].str.contains(target)].to_df().T
-                #Add the label 1 for 'perturbded' for each cell in the dataframe
-                target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
-                target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
-                if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
-                    #Concatenate the negative control and the perturbed cells counts
-                    Neg_cut = Neg.iloc[:, :len(target_data.columns)]
-                    target_data = pd.concat([Neg_cut, target_data], axis=1)
-                    data_sep[HTO][target] = target_data
-                else : pass
-                
-        print('Separation done\n')
-
-        #######################
-        #   Run AutoEncoder   #
-        #######################
+        for condition in product(targets, hto_names) :
+            condition = '/'.join(condition)
+            allresults[condition] = []
+            expression[condition] = []
+            accuracies[condition] = []
+            conditions.append(condition)
         
-        for htoname, HTO in data_sep.items() :
-            for guidename, Guide in HTO.items() :
-                print(f"\nProcessing  {htoname}_{guidename}")
-                try :
-                    run_SSAE(guidename, Guide, results_dir, htoname)
-                
-                except Exception :
-                    print(f"error for {htoname}_{guidename} ! Not enough data")
-                    import shutil; shutil.rmtree(f"{results_dir}/{guidename}/{htoname}")
-                    pass
-                
-                    
-        results_files(results_dir, pathways = args.pathways)
+        acc_df = pd.DataFrame(columns=[f'eta_{ETA}' for ETA in list_ETA])
+
+
+        if args.eta :
+            #Separate the cells according to their condition (HTO)
+            for HTO in hto_names :
+                #Select all the cells with the HTO
+                full_HTO = top10k[top10k.obs['Classif_HTO'].str.contains(HTO)]
+                #Take the cells with non-targeting gRNA as negative control
+                Neg = full_HTO[full_HTO.obs['Classif_gRNA'].str.contains('Neg')].to_df().T
+                #Add the label 0 for 'control cell' for each cell in the dataframe
+                Neg.loc['Label'] = pd.Series(np.zeros(len(Neg.columns)), index=Neg.columns)
+                Neg = pd.concat([Neg.loc[['Label']], Neg.drop('Label')])
+
+                for target in targets : 
+                    target_data = full_HTO[full_HTO.obs['Classif_gRNA'].str.contains(target)].to_df().T
+                    #Add the label 1 for 'perturbded' for each cell in the dataframe
+                    target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
+                    target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
+                    if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
+                        #Concatenate the negative control and the perturbed cells counts
+                        Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=0)
+                        target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=0)
+                        dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
+                        condition = f'{target}/{HTO}'
+                        
+                        list_acc = []
+                        for ETA in list_ETA :
+                            try :
+                                new_SSAE(target, dataset, results_dir, HTO, eta=ETA)
+                                list_acc.append(pd.read_csv(f'{results_dir}/{condition}/bilevel_proj_l1Inftyball_acctest.csv', header=0, index_col=0, sep=';').Global.loc['Mean'])
+                                if args.runs >= 1 :
+                                    shutil.rmtree(f"{results_dir}/{condition}")
+                                else :
+                                    if ETA != list_ETA[-1] :
+                                        shutil.rmtree(f"{results_dir}/{condition}")
+                            except Exception :
+                                print(f"Error for {target}_{HTO} ! Not enough data")
+                                shutil.rmtree(f"{results_dir}/{condition}")
+                                pass
+
+                        acc_df.loc[condition] = list_acc
+                        acc_df.to_csv(f'{results_dir}/accuracies.csv')
+                        
+                    else : pass
+
+            eta_fig(acc_df)
+
+            acc_df = pd.concat([acc_df, pd.DataFrame(acc_df.idxmax(axis=1).value_counts()).T])
+            acc_df.to_csv(f'{results_dir}/accuracies.csv')
+
+        if args.runs>1 :
+            ranks_dir = f'{results_dir}/genes_ranks/'
+            os.makedirs(ranks_dir)
+
+            for run in range(args.runs) :
+                for HTO in hto_names :
+                    #Select all the cells with the HTO
+                    full_HTO = top10k[top10k.obs['Classif_HTO'].str.contains(HTO)]
+                    #Take the cells with non-targeting gRNA as negative control
+                    Neg = full_HTO[full_HTO.obs['Classif_gRNA'].str.contains('Neg')].to_df().T
+                    #Add the label 0 for 'control cell' for each cell in the dataframe
+                    Neg.loc['Label'] = pd.Series(np.zeros(len(Neg.columns)), index=Neg.columns)
+                    Neg = pd.concat([Neg.loc[['Label']], Neg.drop('Label')])
+
+                    for target in targets : 
+                        target_data = full_HTO[full_HTO.obs['Classif_gRNA'].str.contains(target)].to_df().T
+                        #Add the label 1 for 'perturbded' for each cell in the dataframe
+                        target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
+                        target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
+                        if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
+                            #Concatenate the negative control and the perturbed cells counts
+                            Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                            target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                            dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
+                            condition = f'{target}/{HTO}'
+                            genes = Neg.index.to_list()[1:]
+                            neg_exp = Neg.iloc[1:, :].mean(axis=1)
+                            pert_exp = target_data.iloc[1:, :].mean(axis=1)
+                            expression_df = pd.DataFrame({'Gene' : genes, 'Perturbed_expression' : pert_exp, 'Control_expression' : neg_exp})
+                            expression_df['log2_ratio'] = np.log2(expression_df['Perturbed_expression'] / expression_df['Control_expression'])
+                            expression[condition].append(expression_df)
+                            
+                            if run != args.runs-1 :
+                                try :
+                                    if args.eta :
+                                        new_SSAE(target, dataset, results_dir, HTO, eta=float(acc_df.loc[condition].idxmax().split('_')[-1]))
+                                    else :
+                                        new_SSAE(target, dataset, results_dir, HTO, eta=0.25)
+                                    scores = pd.read_csv(f'{results_dir}/{condition}/bilevel_proj_l1Inftyball_topGenes_Captum_dl_300.csv', header=0, sep=';')[['Features', 'Mean']]
+                                    scores['Rank'] = scores.index + 1
+                                    allresults[condition].append(scores)
+                                    if run != args.runs-1 :
+                                        shutil.rmtree(f"{results_dir}/{condition}")
+                                except Exception :
+                                    print(f"Error for {target}_{HTO} ! Not enough data")
+                                    shutil.rmtree(f"{results_dir}/{condition}")
+                                    pass
+            
+            conditions = product(targets, hto_names)
+            for condition in tqdm(conditions) :
+                condition = '/'.join(condition)
+                if allresults[condition] and expression[condition]:
+                    results1=allresults[condition][0]
+
+                    for idx, results in enumerate(allresults[condition]) :
+                        results.index.name = 'Features'
+                        if idx != 0 :
+                            results = results.reindex(allresults[condition][0].index)                        
+                        
+                    df = pd.DataFrame({'Gene' : results1['Features'], 
+                                    'Mean_Weight' : pd.concat(allresults[condition], axis=1)['Mean'].mean(axis=1),
+                                    'Weight_Std' : pd.concat(allresults[condition], axis=1)['Mean'].std(axis=1),
+                                    'Mean_Rank' : pd.concat(allresults[condition], axis=1)['Rank'].mean(axis=1),
+                                    'Rank_Std' : pd.concat(allresults[condition], axis=1)['Rank'].std(axis=1)})
+                    df = df.sort_values(by='Mean_Rank')
+                    df.index.name = 'Gene'
+
+                    import ipdb; ipdb.set_trace()
+                    df2 = pd.DataFrame({'Gene' : expression[condition][0]['Gene'].to_list(), 
+                                        'log2_ratio' : pd.concat(expression[condition], axis=1)['log2_ratio'].mean(axis=1)})
+                    df2.index.name='Gene'
+                    df2 = df2.reindex(df.index)
+                    df['log2_ratio'] = df2['log2_ratio']
+                    df.index.name = 'Gene'
+                    parts = condition.split('/')
+                    df.to_csv(f'{results_dir}/{parts[0]}/{parts[1]}.csv', index = True)   
+                else :
+                    pass 
+        
+        else : 
+            for HTO in hto_names :
+                #Select all the cells with the HTO
+                full_HTO = top10k[top10k.obs['Classif_HTO'].str.contains(HTO)]
+                #Take the cells with non-targeting gRNA as negative control
+                Neg = full_HTO[full_HTO.obs['Classif_gRNA'].str.contains('Neg')].to_df().T
+                #Add the label 0 for 'control cell' for each cell in the dataframe
+                Neg.loc['Label'] = pd.Series(np.zeros(len(Neg.columns)), index=Neg.columns)
+                Neg = pd.concat([Neg.loc[['Label']], Neg.drop('Label')])
+
+                for target in targets : 
+                    target_data = full_HTO[full_HTO.obs['Classif_gRNA'].str.contains(target)].to_df().T
+                    #Add the label 1 for 'perturbded' for each cell in the dataframe
+                    target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
+                    target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
+                    if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
+                        #Concatenate the negative control and the perturbed cells counts
+                        Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                        target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                        dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
+                        
+                        try :
+                            if args.eta :
+                                new_SSAE(target, dataset, results_dir, HTO, eta=float(acc_df.loc[condition].idxmax().split('_')[-1]))
+                            else :
+                                new_SSAE(target, dataset, results_dir, HTO, eta=0.25)
+                            
+                        except Exception :
+                            print(f"Error for {target}_{HTO} ! Not enough data")
+                            shutil.rmtree(f"{results_dir}/{condition}")
+                            pass
+
+        results_files(results_dir, targets, HTO = hto_names, pathways = args.pathways)                                
 
         end = time.time()
 
@@ -656,4 +898,4 @@ def main() :
 
 
 if __name__ == "__main__" :
-    main() 
+    main()  
