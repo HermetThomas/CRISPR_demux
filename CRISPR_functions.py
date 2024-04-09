@@ -262,17 +262,6 @@ def results_files(results_dir, targets_names, HTO=None, pathways = False) :
             perturbed_cells.loc[len(perturbed_cells)] = {'Condition':target, 'Precision':f"{precision} % mean precision"}
         perturbed_cells.to_csv(f"{results_dir}/perturbed_cells.csv", index = False, sep = ';')
 
-def make_pchip_graph(x, y, npoints=300):
-                        pchip = interpolate.PchipInterpolator(x, y)
-                        xnew = np.linspace(min(x), max(x), num=npoints)
-                        yfit = pchip(xnew)
-                        plt.plot(xnew, yfit)
-                        return (xnew, yfit)
-
-def getcloser(x, yfit, xnew):
-                        idx = (np.abs(xnew - x)).argmin()
-                        return yfit[idx]
-
 def getcloser(x, yfit, xnew):
     idx = (np.abs(xnew - x)).argmin()
     return yfit[idx]
