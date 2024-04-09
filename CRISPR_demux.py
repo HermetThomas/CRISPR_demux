@@ -283,18 +283,19 @@ def main() :
         #Select the rows corresponding to the 10,000 most expressed genes from the counts matrix
         top10k =counts_adata[:, counts_adata.var_names.isin(top_10k_genes)].copy()    
 
+        #list of eta parameters to test as hyperparameter for the autoencoder if '-eta' is specified 
         list_ETA = [0.05,0.1,0.5,1]
+        #dictionary that contains the most differentially expressed genes for each condition and their rank
         allresults = {}
+        #dictionary that contains the log(fold change) of the studied genes between the perturbed cells and control cells 
         expression = {}
-        accuracies = {}
-        conditions = []
 
         for condition in targets :
+            #create a list for each condition in each dictionary
             allresults[condition] = []
             expression[condition] = []
-            accuracies[condition] = []
-            conditions.append(condition)
         
+        #Create a dataframe in which the accuracies by eta will be stored for each condition
         acc_df = pd.DataFrame(columns=[f'eta_{ETA}' for ETA in list_ETA])
         
         #Take the cells with non-targeting gRNA as negative control
@@ -310,16 +311,20 @@ def main() :
                 target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
                 target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
                 if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
-                    #Concatenate the negative control and the perturbed cells counts
+                    #Take a random sample of both datasets to have a matching number of control and perturbed cells
                     Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=0)
                     target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=0)
+                    #Concatenate the negative control and the perturbed cells counts
                     dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
                     
+                    #create a list that will contain the accuracy for each eta parameter tested
                     list_acc = []
                     for ETA in list_ETA :
                         try :
                             new_SSAE(target, dataset, results_dir, eta=ETA)
+                            #Add the accuracy of the run to the list of accuracies
                             list_acc.append(pd.read_csv(f'{results_dir}/{target}/bilevel_proj_l1Inftyball_acctest.csv', header=0, index_col=0, sep=';').Global.loc['Mean'])
+                            #Keep the results files only if no other runs are expected
                             if args.runs >= 1 :
                                 shutil.rmtree(f"{results_dir}/{target}")
                             else :
@@ -331,14 +336,17 @@ def main() :
                             shutil.rmtree(f"{results_dir}/{target}")
                             pass
 
-                    
+                    #Add the list of accuracies as a row in the accuracy dataframe 
                     acc_df.loc[target] = list_acc
+                    #Save the dataframe after each condition to be able to check the advancement of the script
                     acc_df.to_csv(f'{results_dir}/accuracies.csv')
 
                 else : pass
 
+            #plot accuracy = f(eta) for each condition
             eta_fig(acc_df)
-                
+            
+            #Add a row containing the number of times each eta parameter has the max accuracy
             acc_df = pd.concat([acc_df, pd.DataFrame(acc_df.idxmax(axis=1).value_counts()).T])
             acc_df.to_csv(f'{results_dir}/accuracies.csv')
 
@@ -350,36 +358,43 @@ def main() :
                     target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
                     target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
                     if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
-                        #Concatenate the negative control and the perturbed cells counts
+                        #Take a random sample of both datasets to have a matching number of control and perturbed cells
                         Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
                         target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                        #Concatenate the negative control and the perturbed cells counts
                         dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
-                        target
-                        genes = Neg.index.to_list()[1:]
-                        neg_exp = Neg.iloc[1:, :].mean(axis=1)
-                        pert_exp = target_data.iloc[1:, :].mean(axis=1)
-                        expression_df = pd.DataFrame({'Gene' : genes, 'Perturbed_expression' : pert_exp, 'Control_expression' : neg_exp})
+                        #create a dataframe that contains the expression of each gene in perturbed and control cells for the current run
+                        expression_df = pd.DataFrame({'Gene' : Neg.index.to_list()[1:], 
+                                                      'Perturbed_expression' : target_data.iloc[1:, :].mean(axis=1), 
+                                                      'Control_expression' : Neg.iloc[1:, :].mean(axis=1)})
+                        #Add a column that contains the log fold change of each gene between control and perturbed cells
                         expression_df['log2_ratio'] = np.log2(expression_df['Perturbed_expression'] / expression_df['Control_expression'])
+                        #Add the dataframe to the list of dataframes of the current condition
                         expression[target].append(expression_df)
                         
-                        if run != args.runs-1 :
-                            try :
-                                if args.eta :
-                                    new_SSAE(target, dataset, results_dir, HTO, eta=float(acc_df.loc[target].idxmax().split('_')[-1]))
-                                else :
-                                    new_SSAE(target, dataset, results_dir, HTO, eta=0.25)
-                                scores = pd.read_csv(f'{results_dir}/{target}/bilevel_proj_l1Inftyball_topGenes_Captum_dl_300.csv', header=0, sep=';')[['Features', 'Mean']]
-                                scores['Rank'] = scores.index + 1
-                                allresults[target].append(scores)
-                                if run != args.runs-1 :
-                                    shutil.rmtree(f"{results_dir}/{target}")
-                            except Exception :
-                                print(f"Error for {target}_{HTO} ! Not enough data")
+                        try :
+                            #If the best eta was determined beforehand, use it as hyperparameter
+                            if args.eta :
+                                new_SSAE(target, dataset, results_dir, HTO, eta=float(acc_df.loc[target].idxmax().split('_')[-1]))
+                            else :
+                                new_SSAE(target, dataset, results_dir, HTO, eta=0.25)
+
+                            #Store the most differentially expressed genes, their weight and their rank in a dataframe
+                            scores = pd.read_csv(f'{results_dir}/{target}/bilevel_proj_l1Inftyball_topGenes_Captum_dl_300.csv', header=0, sep=';')[['Features', 'Mean']]
+                            scores['Rank'] = scores.index + 1
+                            #Add the dataframe to the list of dataframes corresponding to the current condition
+                            allresults[target].append(scores)
+                            #Keep the results for the last run only
+                            if run != args.runs-1 :
                                 shutil.rmtree(f"{results_dir}/{target}")
-                                pass
+                        except Exception :
+                            print(f"Error for {target}_{HTO} ! Not enough data")
+                            shutil.rmtree(f"{results_dir}/{target}")
+                            pass
         
             for condition in tqdm(targets) :
-
+                
+                #For each condition, make a dataframe that contains the mean weight, weight std, mean rank, rank std and log2 fold change of each gene 
                 if allresults[condition] and expression[condition]:
                     results1=allresults[condition][0]
 
@@ -387,7 +402,7 @@ def main() :
                         results.index.name = 'Features'
                         if idx != 0 :
                             results = results.reindex(allresults[condition][0].index)                        
-                        
+                    
                     df = pd.DataFrame({'Gene' : results1['Features'], 
                                     'Mean_Weight' : pd.concat(allresults[condition], axis=1)['Mean'].mean(axis=1),
                                     'Weight_Std' : pd.concat(allresults[condition], axis=1)['Mean'].std(axis=1),
@@ -396,7 +411,6 @@ def main() :
                     df = df.sort_values(by='Mean_Rank')
                     df.index.name = 'Gene'
 
-                    import ipdb; ipdb.set_trace()
                     df2 = pd.DataFrame({'Gene' : expression[condition][0]['Gene'].to_list(), 
                                         'log2_ratio' : pd.concat(expression[condition], axis=1)['log2_ratio'].mean(axis=1)})
                     df2.index.name='Gene'
@@ -416,9 +430,10 @@ def main() :
                 target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
                 target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
                 if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
-                    #Concatenate the negative control and the perturbed cells counts
+                    
                     Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
                     target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                    #Concatenate the negative control and the perturbed cells counts
                     dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
                     if run != args.runs-1 :
                         try :
@@ -713,19 +728,20 @@ def main() :
         sorted_genes = gene_expression_df.sort_values(by='ExpressionSum', ascending=False)
         top10k = counts_adata[:, counts_adata.var_names.isin(sorted_genes.head(10000)['Gene'].tolist())].copy()
 
+        #list of eta parameters to test as hyperparameter for the autoencoder if '-eta' is specified 
         list_ETA = [0.05,0.1,0.5,1]
+        #dictionary that contains the most differentially expressed genes for each condition and their rank
         allresults = {}
+        #dictionary that contains the log(fold change) of the studied genes between the perturbed cells and control cells 
         expression = {}
-        accuracies = {}
-        conditions = []
 
         for condition in product(targets, hto_names) :
             condition = '/'.join(condition)
+            #create a list for each condition in each dictionary
             allresults[condition] = []
             expression[condition] = []
-            accuracies[condition] = []
-            conditions.append(condition)
         
+        #Create a dataframe in which the accuracies by eta will be stored for each condition
         acc_df = pd.DataFrame(columns=[f'eta_{ETA}' for ETA in list_ETA])
 
 
@@ -746,17 +762,21 @@ def main() :
                     target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
                     target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
                     if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
-                        #Concatenate the negative control and the perturbed cells counts
+                        #Take a random sample of both datasets to have a matching number of control and perturbed cells
                         Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=0)
                         target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=0)
+                        #Concatenate the negative control and the perturbed cells counts
                         dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
                         condition = f'{target}/{HTO}'
                         
+                        #Create a list that will contain the accuracy for each eta parameter tested
                         list_acc = []
                         for ETA in list_ETA :
                             try :
                                 new_SSAE(target, dataset, results_dir, HTO, eta=ETA)
+                                #Add the accuracy of the run to the list of accuracies
                                 list_acc.append(pd.read_csv(f'{results_dir}/{condition}/bilevel_proj_l1Inftyball_acctest.csv', header=0, index_col=0, sep=';').Global.loc['Mean'])
+                                #Keep the results files only if no other runs are expected
                                 if args.runs >= 1 :
                                     shutil.rmtree(f"{results_dir}/{condition}")
                                 else :
@@ -767,13 +787,17 @@ def main() :
                                 shutil.rmtree(f"{results_dir}/{condition}")
                                 pass
 
+                        #Add the list of accuracies as a row in the accuracy dataframe
                         acc_df.loc[condition] = list_acc
+                        #Save the dataframe after each condition to be able to check the advancement of the script
                         acc_df.to_csv(f'{results_dir}/accuracies.csv')
                         
                     else : pass
 
+            #Plot accuracy = f(eta) for each condition
             eta_fig(acc_df)
 
+            #Add a row containing the number of times each eta parameter has the max accuracy
             acc_df = pd.concat([acc_df, pd.DataFrame(acc_df.idxmax(axis=1).value_counts()).T])
             acc_df.to_csv(f'{results_dir}/accuracies.csv')
 
@@ -797,36 +821,44 @@ def main() :
                         target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
                         target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
                         if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
-                            #Concatenate the negative control and the perturbed cells counts
+                            #Take a random sample of both datasets to have a matching number of control and perturbed cells
                             Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
                             target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                            #Concatenate the negative control and the perturbed cells counts
                             dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
-                            condition = f'{target}/{HTO}'
-                            genes = Neg.index.to_list()[1:]
-                            neg_exp = Neg.iloc[1:, :].mean(axis=1)
-                            pert_exp = target_data.iloc[1:, :].mean(axis=1)
-                            expression_df = pd.DataFrame({'Gene' : genes, 'Perturbed_expression' : pert_exp, 'Control_expression' : neg_exp})
+                            #create a dataframe that contains the expression of each gene in perturbed and control cells for the current run
+                            expression_df = pd.DataFrame({'Gene' : Neg.index.to_list()[1:], 
+                                                          'Perturbed_expression' : target_data.iloc[1:, :].mean(axis=1), 
+                                                          'Control_expression' : Neg.iloc[1:, :].mean(axis=1)})
                             expression_df['log2_ratio'] = np.log2(expression_df['Perturbed_expression'] / expression_df['Control_expression'])
+                            #Add the dataframe to the list of dataframes of the current condition
+                            condition = f'{target}/{HTO}'
                             expression[condition].append(expression_df)
                             
-                            if run != args.runs-1 :
-                                try :
-                                    if args.eta :
-                                        new_SSAE(target, dataset, results_dir, HTO, eta=float(acc_df.loc[condition].idxmax().split('_')[-1]))
-                                    else :
-                                        new_SSAE(target, dataset, results_dir, HTO, eta=0.25)
-                                    scores = pd.read_csv(f'{results_dir}/{condition}/bilevel_proj_l1Inftyball_topGenes_Captum_dl_300.csv', header=0, sep=';')[['Features', 'Mean']]
-                                    scores['Rank'] = scores.index + 1
-                                    allresults[condition].append(scores)
-                                    if run != args.runs-1 :
-                                        shutil.rmtree(f"{results_dir}/{condition}")
-                                except Exception :
-                                    print(f"Error for {target}_{HTO} ! Not enough data")
+                            try :
+                                #If the best eta was determined beforehand, use it as hyperparameter
+                                if args.eta :
+                                    new_SSAE(target, dataset, results_dir, HTO, eta=float(acc_df.loc[condition].idxmax().split('_')[-1]))
+                                else :
+                                    new_SSAE(target, dataset, results_dir, HTO, eta=0.25)
+
+                                #Store the most differentially expressed genes, their weight and their rank in a dataframe
+                                scores = pd.read_csv(f'{results_dir}/{condition}/bilevel_proj_l1Inftyball_topGenes_Captum_dl_300.csv', header=0, sep=';')[['Features', 'Mean']]
+                                scores['Rank'] = scores.index + 1
+                                #Add the dataframe to the list of dataframes corresponding to the current condition
+                                allresults[condition].append(scores)
+                                #Keep the results for the last run only
+                                if run != args.runs-1 :
                                     shutil.rmtree(f"{results_dir}/{condition}")
-                                    pass
+                            except Exception :
+                                print(f"Error for {target}_{HTO} ! Not enough data")
+                                shutil.rmtree(f"{results_dir}/{condition}")
+                                pass
             
             conditions = product(targets, hto_names)
             for condition in tqdm(conditions) :
+
+                #For each condition, make a dataframe that contains the mean weight, weight std, mean rank, rank std and log2 fold change of each gene
                 condition = '/'.join(condition)
                 if allresults[condition] and expression[condition]:
                     results1=allresults[condition][0]
@@ -871,13 +903,15 @@ def main() :
                     #Add the label 1 for 'perturbded' for each cell in the dataframe
                     target_data.loc['Label'] = pd.Series(np.ones(len(target_data.columns)), index=target_data.columns)
                     target_data = pd.concat([target_data.loc[['Label']], target_data.drop('Label')])
-                    if len(target_data.columns) > 0 and len(Neg.columns) > 0:    
-                        #Concatenate the negative control and the perturbed cells counts
+                    if len(target_data.columns) > 0 and len(Neg.columns) > 0:   
+                        #Take a random sample of both datasets to have a matching number of control and perturbed cells 
                         Neg_cut = Neg.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
                         target_data_cut = target_data.sample(n=min(len(target_data.columns), len(Neg.columns)), axis=1, random_state=run)
+                        #Concatenate the negative control and the perturbed cells counts
                         dataset = pd.concat([Neg_cut, target_data_cut], axis=1)
                         
                         try :
+                            #If the best eta was determined beforehand, use it as hyperparameter
                             if args.eta :
                                 new_SSAE(target, dataset, results_dir, HTO, eta=float(acc_df.loc[condition].idxmax().split('_')[-1]))
                             else :
