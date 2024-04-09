@@ -344,7 +344,7 @@ def main() :
                 else : pass
 
             #plot accuracy = f(eta) for each condition
-            eta_fig(acc_df)
+            eta_fig(acc_df, results_dir)
             
             #Add a row containing the number of times each eta parameter has the max accuracy
             acc_df = pd.concat([acc_df, pd.DataFrame(acc_df.idxmax(axis=1).value_counts()).T])
@@ -795,7 +795,7 @@ def main() :
                     else : pass
 
             #Plot accuracy = f(eta) for each condition
-            eta_fig(acc_df)
+            eta_fig(acc_df, results_dir)
 
             #Add a row containing the number of times each eta parameter has the max accuracy
             acc_df = pd.concat([acc_df, pd.DataFrame(acc_df.idxmax(axis=1).value_counts()).T])
