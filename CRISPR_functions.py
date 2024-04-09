@@ -1,7 +1,12 @@
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
 import os
+import math
+import time
+from itertools import product
+from scipy import interpolate
 from bioservices import KEGG
 
 
@@ -113,116 +118,70 @@ def clean_guides(guides_list, neg) :
     return guides_list, targets
 
 
-def results_files(results_dir, HTO = True, pathways = False) :
+def results_files(results_dir, targets_names, HTO=None, pathways = False) :
 
     perturbed_cells = pd.DataFrame(columns = ['Condition', 'Precision'])
 
-    folders = os.listdir(results_dir)
+    accuracies = pd.DataFrame(columns = ['Condition','Accuracy'])
 
-    if HTO == True :
-        for target in tqdm(folders) :
+    colors = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#9c755f', '#bab0ac', '#ff9da7', '#9c9ede', '#77aadd', '#99ddff', '#44bb99', '#55cc55', '#bbeebb', '#ffcc66', '#ff9966', '#ff88cc', '#cc99ff', '#778899', '#88aa99', '#ccbbaa']
+    
+    targets = [target for target in targets_names if target in os.listdir(results_dir)]
 
-            if target in ["perturbed_cells.csv", "Distribution_plots"] :
-                pass
+    if HTO != None :
 
-            else :
-                htos = sorted(os.listdir(f"{results_dir}/{target}"))
-                colors = ['dimgray', 'indianred', 'sienna', 'sandybrown', 'goldenrod', 'darkkhaki', 'olive', 'lightgreen', 'seagreen']
-                _, axes = plt.subplots(nrows=1, ncols=4, figsize=(21, 11))
-                i = 0
-                target_scores = []
-                for hto in htos :                    
+        for target in tqdm(targets) :
 
-                    if hto == "top_genes.png" :
-                        pass
-                    else :
-                        top_genes = pd.read_csv(f"{results_dir}/{target}/{hto}/proj_l11ball_topGenes_Captum_dl_300.csv", sep = ';', header = 0)
-                        top = top_genes.nlargest(30, 'Mean')       
-                        axes[i].barh(top['Features'], top['Mean'], color = colors[i])
-                        axes[i].set_xlabel('Mean')
-                        axes[i].set_ylabel('Features')
-                        axes[i].set_title(hto)
-                        axes[i].invert_yaxis()
-                        i+=1
+            htos = [hto for hto in HTO if hto in os.listdir(f'{results_dir}/{target}')]
+            _, axes = plt.subplots(nrows=1, ncols=len(htos), figsize=(21, 11))
+            target_scores = []
 
-                        predictions =  pd.read_csv(f"{results_dir}/{target}/{hto}/Labelspred_softmax.csv", sep = ';', header = 0)   
-                        predictions.columns = ['Name', 'Label', 'Proba_Class0', 'Proba_Class1']
-                        pos = predictions[predictions.Proba_Class1 > 0.5]
-                        true_pos = pos[pos.Label == 1]
-                        false_pos = pos[pos.Label == 0]
-                        precision = len(true_pos) / (len(true_pos) + len(false_pos))
-                        target_scores.append(precision)
-                        new_row = {'Condition' : f"{target}_{hto}", 'Precision' : f"{precision} % precision" }
-                        perturbed_cells.loc[len(perturbed_cells)] = new_row
+            for HTO_idx,HTO in enumerate(htos):    
+                accuracy = pd.read_csv(f'{results_dir}/{target}/{HTO}/proj_l11ball_acctest.csv',sep = ';',index_col=0,header=0).Global.loc['Mean']
+                accuracies.loc[len(accuracies)] = {'Condition' : f'{target}_{HTO}', 'Accuracy' : accuracy}
+                top_genes = pd.read_csv(f"{results_dir}/{target}/{HTO}/proj_l11ball_topGenes_Captum_dl_300.csv", sep = ';', header = 0)
+                top = top_genes.nlargest(30, 'Mean')       
+                axes[HTO_idx].barh(top['Features'], top['Mean'], color = colors[HTO_idx])
+                axes[HTO_idx].set_xlabel('Mean')
+                axes[HTO_idx].set_ylabel('Features')
+                axes[HTO_idx].set_title(HTO)
+                axes[HTO_idx].invert_yaxis()
 
-                        genes_info = pd.DataFrame(columns = ['Gene', 'Pathways'])
 
-                        if pathways == True :
+                predictions =  pd.read_csv(f"{results_dir}/{target}/{HTO}/Labelspred_softmax.csv", sep = ';', header = 0)   
+                predictions.columns = ['Name', 'Label', 'Proba_Class0', 'Proba_Class1']
 
-                            genes_info.Gene = top.nlargest(10, 'Mean').Features
+                pos = predictions[predictions.Proba_Class1 > 0.5]
+                true_pos = len(pos[pos.Label == 1])
+                false_pos = len(pos[pos.Label == 0])
 
-                            print(f"Searching pathways for {target}_{hto} top genes")
+                neg = predictions[predictions.Proba_Class1 < 0.5]
+                true_neg = len(neg[neg.Label == 0])
+                false_neg = len(neg[neg.Label == 1])
 
-                            for gene in trange(len(genes_info)) :
-                                pathways_info = get_pathways(genes_info.Gene.loc[gene])
-
-                                pathways_list = []
-
-                                if pathways_info:
-                                    for pathway in pathways_info:
-                                        pathway_description = get_pathway_info(pathway)
-                                        pathways_list.append(pathway_description)
-                                        
-                                else:
-                                    genes_info.Pathways.loc[gene] = 'No pathways found' 
-
-                                genes_info.Pathways.loc[gene] = ' & '.join(pathways_list)
-                            genes_info.to_csv(f"{results_dir}/{target}/{hto}/topGenes_pathways.csv", index = False, sep = ';')
-                    plt.suptitle(f"Most discriminant Features for {target}", fontsize = 30)
-                    plt.tight_layout()
-                    plt.savefig(f"{results_dir}/{target}/top_genes.png")
+                classif,classif_fig=plt.subplots()
+                classif_fig.bar([true_pos,false_pos,true_neg,false_neg], ['True Positive','False Positive','True Negative','False Negative'], colors=['green','red','green','red'])
+                classif.savefig(f"{results_dir}/{target}/{HTO}/classification.png")
                 
-                mean_target = sum(target_scores) / len(target_scores)        
-                new_row = {'Condition' : f"ALL {target}", 'Precision' : f"{mean_target}  % mean precision"} 
-                perturbed_cells.loc[len(perturbed_cells)] = new_row
-                perturbed_cells.loc[len(perturbed_cells)] = {'Condition' : "----", 'Precision' : "----"}
-        perturbed_cells.to_csv(f"{results_dir}/perturbed_cells.csv", index = False, sep = ';')
-
-    else :
-        for target in tqdm(folders) :
-            
-            if target in ["perturbed_cells.csv", "Distribution_plots"] :
-                pass
-            else :
-                top_genes = pd.read_csv(f"{results_dir}{target}/proj_l11ball_topGenes_Captum_dl_300.csv", sep = ';', header = 0)
-                top = top_genes.nlargest(30, 'Mean')
-
-                plt.figure(figsize=(22, 12))
-
-                plt.barh(top['Features'], top['Mean'], color = "royalblue")
-                plt.xlabel("Mean Dicrimination Weight")
-                plt.ylabel("Gene")
-                plt.title(f"Most Discriminant genes for {target}")
-                plt.gca().invert_yaxis()
-
-                if not os.path.exists(f"{results_dir}{target}") :
-                    os.makedirs(f"{results_dir}{target}")
-                
-                plt.savefig(f"{results_dir}{target}/top_genes_fig.png")
+                precision = pd.read_csv(f'{results_dir}/{target}/{HTO}/proj_l11ball_auctest.csv', header=0,index_col=0,sep=';').Precision.loc['Mean']
+                target_scores.append(precision)
+                perturbed_cells.loc[len(perturbed_cells)] = {'Condition' : f"{target}_{HTO}", 'Precision' : f"{precision} % precision" }
 
                 if pathways == True :
+                    
                     genes_info = pd.DataFrame(columns = ['Gene', 'Pathways'])
 
-                    genes_info.Gene = top_genes.nlargest(10, 'Mean').Features
+                    genes_info.Gene = top.nlargest(10, 'Mean').Features
 
-                    print(f"Searching for pathways for {target} top genes")
+                    print(f"Searching pathways for {target}_{HTO} top genes")
+
                     for gene in trange(len(genes_info)) :
-                        pathways = get_pathways(genes_info.Gene.loc[gene])
+                        pathways_info = get_pathways(genes_info.Gene.loc[gene])
 
                         pathways_list = []
 
-                        if pathways:
-                            for pathway in pathways:
+                        if pathways_info:
+                            for pathway in pathways_info:
                                 pathway_description = get_pathway_info(pathway)
                                 pathways_list.append(pathway_description)
                                 
@@ -230,16 +189,155 @@ def results_files(results_dir, HTO = True, pathways = False) :
                             genes_info.Pathways.loc[gene] = 'No pathways found' 
 
                         genes_info.Pathways.loc[gene] = ' & '.join(pathways_list)
-                    
-                    genes_info.to_csv(f"{results_dir}/{target}/topGenes_Pathways.csv", index = False, sep = ';')
 
-                classification = pd.read_csv(f"{results_dir}{target}/Labelspred_softmax.csv", sep = ';')
-                classification.columns = ['Name', 'Label', 'Proba_Class0', 'Proba_Class1']
-
-                pos = classification[classification.Proba_Class1 > 0.5]
-                true_pos = pos[pos.Label == 1]
-                false_pos = pos[pos.Label == 0]
-                precision = len(true_pos) / (len(true_pos)+len(false_pos))
-                perturbed_cells.loc[len(perturbed_cells)] = {'Condition':target, 'Precision':f"{true_pos} % mean precision"}
-        perturbed_cells.to_csv(f"{results_dir}/perturbed_cells.csv", index = False, sep = ';')
+                    genes_info.to_csv(f"{results_dir}/{target}/{HTO}/topGenes_pathways.csv", index = False, sep = ';')
+            plt.suptitle(f"Most discriminant Features for {target}", fontsize = 30)
+            plt.tight_layout()
+            plt.savefig(f"{results_dir}/{target}/top_genes.png")
             
+            mean_target = sum(target_scores) / len(target_scores)        
+            perturbed_cells.loc[len(perturbed_cells)] = {'Condition' : f"ALL {target}", 'Precision' : f"{mean_target}  % mean precision"} 
+            perturbed_cells.loc[len(perturbed_cells)] = {'Condition' : "---------", 'Precision' : "---------------------"}
+        perturbed_cells.to_csv(f"{results_dir}/perturbed_cells.csv", index = False, sep = ';')
+
+    else :
+        for target in tqdm(targets) :
+            
+            top_genes = pd.read_csv(f"{results_dir}{target}/proj_l11ball_topGenes_Captum_dl_300.csv", sep = ';', header = 0)
+            top = top_genes.nlargest(30, 'Mean')
+
+            plt.figure(figsize=(22, 12))
+
+            plt.barh(top['Features'], top['Mean'], color = "royalblue")
+            plt.xlabel("Mean Dicrimination Weight")
+            plt.ylabel("Gene")
+            plt.title(f"Most Discriminant genes for {target}")
+            plt.gca().invert_yaxis()
+
+            if not os.path.exists(f"{results_dir}{target}") :
+                os.makedirs(f"{results_dir}{target}")
+            
+            plt.savefig(f"{results_dir}{target}/top_genes_fig.png")
+
+            if pathways == True :
+                genes_info = pd.DataFrame(columns = ['Gene', 'Pathways'])
+
+                genes_info.Gene = top_genes.nlargest(10, 'Mean').Features
+
+                print(f"Searching for pathways for {target} top genes")
+                for gene in trange(len(genes_info)) :
+                    pathways = get_pathways(genes_info.Gene.loc[gene])
+
+                    pathways_list = []
+
+                    if pathways:
+                        for pathway in pathways:
+                            pathway_description = get_pathway_info(pathway)
+                            pathways_list.append(pathway_description)
+                            
+                    else:
+                        genes_info.Pathways.loc[gene] = 'No pathways found' 
+
+                    genes_info.Pathways.loc[gene] = ' & '.join(pathways_list)
+                
+                genes_info.to_csv(f"{results_dir}/{target}/topGenes_Pathways.csv", index = False, sep = ';')
+
+            predictions = pd.read_csv(f"{results_dir}{target}/Labelspred_softmax.csv", sep = ';')
+            predictions.columns = ['Name', 'Label', 'Proba_Class0', 'Proba_Class1']
+
+            pos = predictions[predictions.Proba_Class1 > 0.5]
+            true_pos = pos[pos.Label == 1]
+            false_pos = pos[pos.Label == 0]
+
+            neg = predictions[predictions.Proba_Class1 < 0.5]
+            true_neg = len(neg[neg.Label == 0])
+            false_neg = len(neg[neg.Label == 1])
+
+            classif,classif_fig=plt.subplots()
+            classif_fig.bar([true_pos,false_pos,true_neg,false_neg], ['True Positive','False Positive','True Negative','False Negative'], colors=['green','red','green','red'])
+            classif.savefig(f"{results_dir}/{target}/classification.png")
+
+
+            precision = pd.read_csv(f'{results_dir}/{target}/proj_l11ball_auctest.csv', header=0,index_col=0,sep=';').Precision.loc['Mean']
+            perturbed_cells.loc[len(perturbed_cells)] = {'Condition':target, 'Precision':f"{precision} % mean precision"}
+        perturbed_cells.to_csv(f"{results_dir}/perturbed_cells.csv", index = False, sep = ';')
+
+def make_pchip_graph(x, y, npoints=300):
+                        pchip = interpolate.PchipInterpolator(x, y)
+                        xnew = np.linspace(min(x), max(x), num=npoints)
+                        yfit = pchip(xnew)
+                        plt.plot(xnew, yfit)
+                        return (xnew, yfit)
+
+def getcloser(x, yfit, xnew):
+                        idx = (np.abs(xnew - x)).argmin()
+                        return yfit[idx]
+
+def getcloser(x, yfit, xnew):
+    idx = (np.abs(xnew - x)).argmin()
+    return yfit[idx]
+
+def make_pchip_graph(x, y, npoints=300):
+    pchip = interpolate.PchipInterpolator(x, y)
+    xnew = np.linspace(min(x), max(x), num=npoints)
+    yfit = pchip(xnew)
+    plt.plot(xnew, yfit)
+    return (xnew, yfit)
+
+def eta_fig(dataframe) :
+
+    dataframe.index = [condition.strip() for condition in dataframe.index]
+    conditions = list(dataframe.index)
+    conditions.remove('count')
+    
+    for condition in conditions :
+        accuracy = np.array(list(dataframe.loc[condition]))
+        RadiusC = np.array([float(eta.split('_')[-1]) for eta in dataframe.columns])
+
+        radiusToUse= RadiusC
+        accToUse=accuracy
+
+        xnew, yfit = make_pchip_graph(radiusToUse,accToUse)
+
+        plt.title("HIF2   ")  # titre général
+        plt.xlabel("Parameter $\eta$")                         # abcisses
+        plt.ylabel("Accuracy")                      # ordonnées
+
+        a = min(radiusToUse)
+        b = max(radiusToUse)  #  
+        tol = 0.01  # impact the execution time
+        r= 0.5*(3-math.sqrt(5))
+
+        start_time = time.time()
+
+        while (b-a > tol):
+            c = a + r*(b-a);
+            d = b - r*(b-a);
+            if(getcloser(c, yfit,xnew) > getcloser(d, yfit,xnew)):
+                b = d
+            else:
+                a = c
+
+        parameter = getcloser(c,xnew, xnew)
+
+        end_time = time.time()
+
+        # Calculate and print the execution time
+        execution_time = (end_time - start_time)*1000
+
+        print(f"Execution time: {execution_time} ms")
+
+
+        print("Golden Section Optimal parameter", parameter)
+        print("Golden section Maximum accuracy ", getcloser(c,yfit,xnew))
+
+
+        plt.axvline(x=parameter, color='g', linestyle='--', label='Optimal Parameter')
+
+
+        # Display the legend
+        plt.legend()
+        parts = condition.split('/')
+        # Show the plot
+        plt.savefig(f'/data/data_hermet/CRISPR_demux/autoencoder/results_stat/results_016/{parts[0]}/ETA_curve_{parts[1]}.png')
+        plt.close()
