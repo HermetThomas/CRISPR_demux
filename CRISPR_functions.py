@@ -289,10 +289,11 @@ def eta_fig(dataframe) :
     dataframe.index = [condition.strip() for condition in dataframe.index]
     conditions = list(dataframe.index)
     conditions.remove('count')
-    
+    list_eta = [float(eta.split('_')[-1]) for eta in dataframe.columns]
+
     for condition in conditions :
         accuracy = np.array(list(dataframe.loc[condition]))
-        RadiusC = np.array([float(eta.split('_')[-1]) for eta in dataframe.columns])
+        RadiusC = np.array(list_eta)
 
         radiusToUse= RadiusC
         accToUse=accuracy
