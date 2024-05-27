@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
+import random
+import seaborn as sns 
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 from tqdm import tqdm, trange
 import os
 import math
@@ -117,71 +120,117 @@ def clean_guides(guides_list, neg) :
 
     return guides_list, targets
 
+def determine_color(value):
+    if value <0 :
+        return 'royalblue'
+    elif value >0 :
+        return 'indianred'
+    elif value == 0 :
+        return 'darkgray'
 
-def results_files(results_dir, targets_names, HTO=None, pathways = False) :
+def weight_expression(results_dir, condition, expression_df) :
+    top_genes_file = next((file for file in os.listdir(f'{results_dir}/{condition}') if 'Mean_Captum' in file), None)
+    df = pd.read_csv(f"{results_dir}/{condition}/{top_genes_file}", sep = ';', header = 0)[['Features', 'Mean']]
+    df.rename(columns={'Features' : 'Gene', 'Mean' : 'Weight'}, inplace = True)
+    df.index = df['Gene']
+    expression_df = expression_df.reindex(df.index)
+    df['log2_FC'] = expression_df['log2_FC']
+    df['color'] = df['log2_FC'].apply(lambda x: determine_color(x))
+    df.to_csv(f'{results_dir}/{condition}/weight_expression.csv', index=False)
 
-    perturbed_cells = pd.DataFrame(columns = ['Condition', 'Precision'])
-
-    accuracies = pd.DataFrame(columns = ['Condition','Accuracy'])
-
-    colors = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#9c755f', '#bab0ac', '#ff9da7', '#9c9ede', '#77aadd', '#99ddff', '#44bb99', '#55cc55', '#bbeebb', '#ffcc66', '#ff9966', '#ff88cc', '#cc99ff', '#778899', '#88aa99', '#ccbbaa']
+def top_genes(results_dir, targets_names, hto_names=None, pathways = False) :
+    
+    colors = ["#"+''.join([random.choice('0123456789ABCDEF') for j in range(6)])
+                    for i in range(len(hto_names))]
     
     targets = [target for target in targets_names if target in os.listdir(results_dir)]
 
-    if HTO != None :
+    if hto_names != None :
 
         for target in tqdm(targets) :
-
-            htos = [hto for hto in HTO if hto in os.listdir(f'{results_dir}/{target}')]
+            
+            plt.figure()
+            htos = [hto for hto in hto_names if hto in os.listdir(f'{results_dir}/{target}')]
             _, axes = plt.subplots(nrows=1, ncols=len(htos), figsize=(21, 11))
-            target_scores = []
 
-            for HTO_idx,HTO in enumerate(htos):    
-                accuracy = pd.read_csv(f'{results_dir}/{target}/{HTO}/proj_l11ball_acctest.csv',sep = ';',index_col=0,header=0).Global.loc['Mean']
-                accuracies.loc[len(accuracies)] = {'Condition' : f'{target}_{HTO}', 'Accuracy' : accuracy}
-                top_genes = pd.read_csv(f"{results_dir}/{target}/{HTO}/proj_l11ball_topGenes_Captum_dl_300.csv", sep = ';', header = 0)
-                top = top_genes.nlargest(30, 'Mean')       
-                axes[HTO_idx].barh(top['Features'], top['Mean'], color = colors[HTO_idx])
-                axes[HTO_idx].set_xlabel('Mean')
-                axes[HTO_idx].set_ylabel('Features')
-                axes[HTO_idx].set_title(HTO)
-                axes[HTO_idx].invert_yaxis()
+            for HTO_idx,HTO in enumerate(htos):   
+                if os.path.isfile(f'{results_dir}/{target}/{HTO}/weight_expression.csv') : 
+                    top = pd.read_csv(f'{results_dir}/{target}/{HTO}/weight_expression.csv', header=0).nlargest(30, 'Weight')   
+                    acc_file = next((file for file in os.listdir(f'{results_dir}/{target}/{HTO}') if 'acc' in file), None)      
+                    acc = round(pd.read_csv(f'{results_dir}/{target}/{HTO}/{acc_file}', header=0, index_col=0, sep=';').Global.loc['Mean'], 2)    
+                    axes[HTO_idx].barh(top['Gene'], top['Weight'], color = colors[HTO_idx])
+                    axes[HTO_idx].set_xlabel('Mean weight')
+                    axes[HTO_idx].set_ylabel('Gene')
+                    axes[HTO_idx].set_title(f'{HTO} - accuracy : {acc}')
+                    axes[HTO_idx].invert_yaxis()
+                    for i, tick in enumerate(axes[HTO_idx].get_yticklabels()):  # Loop through tick labels
+                        tick.set_color(top['color'].loc[i])
 
 
-                predictions =  pd.read_csv(f"{results_dir}/{target}/{HTO}/Labelspred_softmax.csv", sep = ';', header = 0)   
-                predictions.columns = ['Name', 'Label', 'Proba_Class0', 'Proba_Class1']
+                    if pathways == True :
+                        
+                        genes_info = pd.DataFrame(columns = ['Gene', 'Pathways'])
 
-                pos = predictions[predictions.Proba_Class1 > 0.5]
-                true_pos = len(pos[pos.Label == 1])
-                false_pos = len(pos[pos.Label == 0])
+                        genes_info.Gene = top.nlargest(20, 'Mean').Features
 
-                neg = predictions[predictions.Proba_Class1 < 0.5]
-                true_neg = len(neg[neg.Label == 0])
-                false_neg = len(neg[neg.Label == 1])
+                        print(f"Searching pathways for {target}_{HTO} top genes")
 
-                classif,classif_fig=plt.subplots()
-                classif_fig.bar([true_pos,false_pos,true_neg,false_neg], ['True Positive','False Positive','True Negative','False Negative'], colors=['green','red','green','red'])
-                classif.savefig(f"{results_dir}/{target}/{HTO}/classification.png")
+                        for gene in trange(len(genes_info)) :
+                            pathways_info = get_pathways(genes_info.Gene.loc[gene])
+
+                            pathways_list = []
+
+                            if pathways_info:
+                                for pathway in pathways_info:
+                                    pathway_description = get_pathway_info(pathway)
+                                    pathways_list.append(pathway_description)
+                                    
+                            else:
+                                genes_info.Pathways.loc[gene] = 'No pathways found' 
+
+                            genes_info.Pathways.loc[gene] = ' & '.join(pathways_list)
+
+                        genes_info.to_csv(f"{results_dir}/{target}/{HTO}/topGenes_pathways.csv", index = False, sep = ';')
+                else :
+                    pass    
+            plt.suptitle(f"Most discriminant Features for {target}", fontsize = 30)
+            plt.tight_layout()
+            plt.savefig(f"{results_dir}/{target}/top_genes.png")
+            plt.close()
+            
+
+    else :
+
+        for target in tqdm(targets) :
+            if os.path.isfile(f'{results_dir}/{target}/weight_expression.csv') :
+                top = pd.read_csv(f'{results_dir}/{target}/weight_expression.csv', header=0).nlargest(30, 'Weight') 
+                acc_file = next((file for file in os.listdir(f'{results_dir}/{target}/{HTO}') if 'acc' in file), None)      
+                acc = round(pd.read_csv(f'{results_dir}/{target}/{HTO}/{acc_file}', header=0, index_col=0, sep=';').Global.loc['Mean'], 2)
+                plt.figure()
+
+                bars = plt.barh(top['Gene'], top['Weight'], color = "royalblue")
+                for i, tick in enumerate(bars.get_yticklabels()):  # Loop through tick labels
+                        tick.set_color(top['color'].loc[i])
+                plt.xlabel("Mean weight")
+                plt.ylabel("Gene")
+                plt.title(f'{target} - accuracy : {acc}')
+                plt.gca().invert_yaxis()
                 
-                precision = pd.read_csv(f'{results_dir}/{target}/{HTO}/proj_l11ball_auctest.csv', header=0,index_col=0,sep=';').Precision.loc['Mean']
-                target_scores.append(precision)
-                perturbed_cells.loc[len(perturbed_cells)] = {'Condition' : f"{target}_{HTO}", 'Precision' : f"{precision} % precision" }
+                plt.savefig(f"{results_dir}{target}/top_genes.png")
 
                 if pathways == True :
-                    
                     genes_info = pd.DataFrame(columns = ['Gene', 'Pathways'])
 
-                    genes_info.Gene = top.nlargest(10, 'Mean').Features
+                    genes_info.Gene = top.nlargest(20, 'Weight').Features
 
-                    print(f"Searching pathways for {target}_{HTO} top genes")
-
+                    print(f"Searching for pathways for {target} top genes")
                     for gene in trange(len(genes_info)) :
-                        pathways_info = get_pathways(genes_info.Gene.loc[gene])
+                        pathways = get_pathways(genes_info.Gene.loc[gene])
 
                         pathways_list = []
 
-                        if pathways_info:
-                            for pathway in pathways_info:
+                        if pathways:
+                            for pathway in pathways:
                                 pathway_description = get_pathway_info(pathway)
                                 pathways_list.append(pathway_description)
                                 
@@ -189,78 +238,9 @@ def results_files(results_dir, targets_names, HTO=None, pathways = False) :
                             genes_info.Pathways.loc[gene] = 'No pathways found' 
 
                         genes_info.Pathways.loc[gene] = ' & '.join(pathways_list)
+                    
+                    genes_info.to_csv(f"{results_dir}/{target}/topGenes_Pathways.csv", index = False)
 
-                    genes_info.to_csv(f"{results_dir}/{target}/{HTO}/topGenes_pathways.csv", index = False, sep = ';')
-            plt.suptitle(f"Most discriminant Features for {target}", fontsize = 30)
-            plt.tight_layout()
-            plt.savefig(f"{results_dir}/{target}/top_genes.png")
-            
-            mean_target = sum(target_scores) / len(target_scores)        
-            perturbed_cells.loc[len(perturbed_cells)] = {'Condition' : f"ALL {target}", 'Precision' : f"{mean_target}  % mean precision"} 
-            perturbed_cells.loc[len(perturbed_cells)] = {'Condition' : "---------", 'Precision' : "---------------------"}
-        perturbed_cells.to_csv(f"{results_dir}/perturbed_cells.csv", index = False, sep = ';')
-
-    else :
-        for target in tqdm(targets) :
-            
-            top_genes = pd.read_csv(f"{results_dir}{target}/proj_l11ball_topGenes_Captum_dl_300.csv", sep = ';', header = 0)
-            top = top_genes.nlargest(30, 'Mean')
-
-            plt.figure(figsize=(22, 12))
-
-            plt.barh(top['Features'], top['Mean'], color = "royalblue")
-            plt.xlabel("Mean Dicrimination Weight")
-            plt.ylabel("Gene")
-            plt.title(f"Most Discriminant genes for {target}")
-            plt.gca().invert_yaxis()
-
-            if not os.path.exists(f"{results_dir}{target}") :
-                os.makedirs(f"{results_dir}{target}")
-            
-            plt.savefig(f"{results_dir}{target}/top_genes_fig.png")
-
-            if pathways == True :
-                genes_info = pd.DataFrame(columns = ['Gene', 'Pathways'])
-
-                genes_info.Gene = top_genes.nlargest(10, 'Mean').Features
-
-                print(f"Searching for pathways for {target} top genes")
-                for gene in trange(len(genes_info)) :
-                    pathways = get_pathways(genes_info.Gene.loc[gene])
-
-                    pathways_list = []
-
-                    if pathways:
-                        for pathway in pathways:
-                            pathway_description = get_pathway_info(pathway)
-                            pathways_list.append(pathway_description)
-                            
-                    else:
-                        genes_info.Pathways.loc[gene] = 'No pathways found' 
-
-                    genes_info.Pathways.loc[gene] = ' & '.join(pathways_list)
-                
-                genes_info.to_csv(f"{results_dir}/{target}/topGenes_Pathways.csv", index = False, sep = ';')
-
-            predictions = pd.read_csv(f"{results_dir}{target}/Labelspred_softmax.csv", sep = ';')
-            predictions.columns = ['Name', 'Label', 'Proba_Class0', 'Proba_Class1']
-
-            pos = predictions[predictions.Proba_Class1 > 0.5]
-            true_pos = pos[pos.Label == 1]
-            false_pos = pos[pos.Label == 0]
-
-            neg = predictions[predictions.Proba_Class1 < 0.5]
-            true_neg = len(neg[neg.Label == 0])
-            false_neg = len(neg[neg.Label == 1])
-
-            classif,classif_fig=plt.subplots()
-            classif_fig.bar([true_pos,false_pos,true_neg,false_neg], ['True Positive','False Positive','True Negative','False Negative'], colors=['green','red','green','red'])
-            classif.savefig(f"{results_dir}/{target}/classification.png")
-
-
-            precision = pd.read_csv(f'{results_dir}/{target}/proj_l11ball_auctest.csv', header=0,index_col=0,sep=';').Precision.loc['Mean']
-            perturbed_cells.loc[len(perturbed_cells)] = {'Condition':target, 'Precision':f"{precision} % mean precision"}
-        perturbed_cells.to_csv(f"{results_dir}/perturbed_cells.csv", index = False, sep = ';')
 
 def getcloser(x, yfit, xnew):
     idx = (np.abs(xnew - x)).argmin()
@@ -273,61 +253,267 @@ def make_pchip_graph(x, y, npoints=300):
     plt.plot(xnew, yfit)
     return (xnew, yfit)
 
-def eta_fig(dataframe, results_dir) :
+def eta_plot(list_acc, list_eta, results_dir, condition) :
 
-    dataframe.index = [condition.strip() for condition in dataframe.index]
-    conditions = list(dataframe.index)
-    conditions.remove('count')
-    list_eta = [float(eta.split('_')[-1]) for eta in dataframe.columns]
+    plt.figure()
 
-    for condition in conditions :
-        accuracy = np.array(list(dataframe.loc[condition]))
-        RadiusC = np.array(list_eta)
+    accuracy = np.array([acc for acc in list_acc])
+    RadiusC = np.array(list_eta)
 
-        radiusToUse= RadiusC
-        accToUse=accuracy
+    radiusToUse= RadiusC
+    accToUse=accuracy
 
-        xnew, yfit = make_pchip_graph(radiusToUse,accToUse)
+    xnew, yfit = make_pchip_graph(radiusToUse,accToUse)
 
-        plt.title("HIF2   ")  # titre général
-        plt.xlabel("Parameter $\eta$")                         # abcisses
-        plt.ylabel("Accuracy")                      # ordonnées
+    plt.title(condition)  # titre général
+    plt.xlabel("Parameter $\eta$")                         # abcisses
+    plt.ylabel("Accuracy")                      # ordonnées
 
-        a = min(radiusToUse)
-        b = max(radiusToUse)  #  
-        tol = 0.01  # impact the execution time
-        r= 0.5*(3-math.sqrt(5))
+    a = min(radiusToUse)
+    b = max(radiusToUse)  #  
+    tol = 0.01  # impact the execution time
+    r= 0.5*(3-math.sqrt(5))
 
-        start_time = time.time()
+    start_time = time.time()
 
-        while (b-a > tol):
-            c = a + r*(b-a);
-            d = b - r*(b-a);
-            if(getcloser(c, yfit,xnew) > getcloser(d, yfit,xnew)):
-                b = d
-            else:
-                a = c
+    while (b-a > tol):
+        c = a + r*(b-a);
+        d = b - r*(b-a);
+        if(getcloser(c, yfit,xnew) > getcloser(d, yfit,xnew)):
+            b = d
+        else:
+            a = c
 
-        parameter = getcloser(c,xnew, xnew)
+    parameter = getcloser(c,xnew, xnew)
 
-        end_time = time.time()
+    end_time = time.time()
 
-        # Calculate and print the execution time
-        execution_time = (end_time - start_time)*1000
+    # Calculate and print the execution time
+    execution_time = (end_time - start_time)*1000
 
-        print(f"Execution time: {execution_time} ms")
+    print(f"Execution time: {execution_time} ms")
 
 
-        print("Golden Section Optimal parameter", parameter)
-        print("Golden section Maximum accuracy ", getcloser(c,yfit,xnew))
+    print("Golden Section Optimal parameter", parameter)
+    print("Golden section Maximum accuracy ", getcloser(c,yfit,xnew))
 
 
-        plt.axvline(x=parameter, color='g', linestyle='--', label='Optimal Parameter')
+    plt.axvline(x=parameter, color='g', linestyle='--', label='Optimal Parameter')
 
+    # Display the legend
+    plt.legend()
+    parts = condition.split('/')
+    # Show the plot
+    plt.savefig(f'{results_dir}/{parts[0]}/{parts[1]}_ETA_curve.png')
+    plt.close()
 
-        # Display the legend
-        plt.legend()
-        parts = condition.split('/')
-        # Show the plot
-        plt.savefig(f'{results_dir}/{parts[0]}/ETA_curve_{parts[1]}.png')
+def features_df(top_genes) :
+
+    final_df = pd.DataFrame()
+    # Iterate through each dataframe in the list
+    for df in top_genes:
+        # Extract 'Features' and 'Weights' columns
+        features = df['Features'].reset_index(drop=True)
+        weights = df['Mean'].reset_index(drop=True)
+        
+        # Concatenate 'Features' and 'Weights' columns alternately
+        df_concat = pd.concat([features, weights], axis=1)
+        
+        # Append the concatenated dataframe to the final dataframe
+        final_df = pd.concat([final_df, df_concat], axis=1)
+    
+    return final_df
+
+def sortDataframe(df):
+    nbColumnToSort= int((df.shape[1]/2) -1)
+    sorter = df["Features1"].tolist()
+    for i in range(nbColumnToSort):
+        df2 = df.iloc[:, [2*i+2, 2*i+3]]
+        sort2= df2.iloc[:,0].tolist()
+        for item in sort2:
+            if item not in sorter:
+                sorter.append(item)
+        df2= df2.rename(columns={df2.columns[0]: 'Features'})
+        df2.Features = df2.Features.astype("category")
+        df2.Features = df2.Features.cat.set_categories(sorter)
+        df2= df2.sort_values(["Features"])
+        df.iloc[:, [2*i+2, 2*i+3]] = df2.iloc[:, :2]
+    
+    return df
+
+def plotValues(df, figdir):
+    nbColumn= int((df.shape[1]/2))
+    plt.figure(figsize=(10,7))
+    for i in range(nbColumn):
+        df2 = df.iloc[:, [2*i, 2*i+1]]
+        df2=df2.dropna(how='any') 
+        plt.plot(df2.iloc[:, 0],df2.iloc[:, 1] , label=df2.columns[1] ) 
+        
+    plt.title("Feature ranking as a function of the weight")  # titre général
+    plt.xlabel("Feature name")                         # abcisses
+    plt.ylabel("Feature's weight")                      # ordonnées
+    
+    #plt.legend(["Bilevel$\ell_{1.\infty}$","$\ell_{1.\infty}$","$\ell_{1.1}$"])
+    plt.legend(loc="upper right")
+    plt.xticks(rotation=90)
+    plt.savefig(f'{figdir}_ETA_weight.png') 
+
+def eta_weight_plot(df, figdir, list_eta) :
+    
+    Nbr= 20 #Number of features to keep in the plot
+    
+    listfeat=[]
+    for idx, eta in enumerate(list_eta) :
+        listfeat+=[f'Features{idx}', f"$\eta={eta}$"]
+    df.columns = listfeat
+    for idx, eta in enumerate(list_eta) :
+        df[f"$\eta={eta}$"] = df[f"$\eta={eta}$"].apply(float)
+        df[f'Features{idx}'] = df[f'Features{idx}'].apply(str)
+    
+    df= df.head(Nbr)
+    
+    df=sortDataframe(df)
+    
+    plotValues(df, figdir)
+
+def plot_classif(results_dir, df, targets, hto_names=None, eta='', run = '') :
+
+    hto_list = hto_names
+    grna_list = targets
+    if hto_names :
+
+        colors = ["#"+''.join([random.choice('0123456789ABCDEF') for j in range(6)])
+                    for i in range(len(hto_list))]
+        # Common color for the second bar in each plot
+        common_color = 'bisque'
+
+        # Create a figure and subplots for each combination of HTO and gRNA
+        fig, axes = plt.subplots(len(hto_list), len(grna_list), figsize=(len(grna_list)*2, len(hto_list)*4), sharex='col', sharey='row')
+
+        for i, hto in enumerate(hto_list):
+            for j, grna in enumerate(grna_list):
+                condition = f'{grna}/{hto}'
+                if condition in df.index :
+                    y1, y2 = df.loc[condition, ['True_positive', 'False_negative']].values
+                    # Plot data
+                    ax = axes[i, j]
+                    ax.bar('A', y1, width=0.5, label=f'{hto} - {grna}', color=colors[i], alpha=1)  # Use different colors for each HTO
+                    ax.bar('A', y2, width=0.5, label=f'{hto} - {grna} (Second)', color=common_color, alpha=0.73, bottom=y1)  # Common for the second bar, stacked on top
+                    ax.get_xaxis().set_visible(False)
+                    ax.set_title(grna, fontdict={'family':'sans-serif','color':'black','weight':'normal','size':14})
+                elif 'Labelspred_softmax.csv' in os.listdir(f'{results_dir}/{condition}') :
+                    classif = pd.read_csv(f'{results_dir}/{condition}/Labelspred_softmax.csv', sep=';', header=0)
+                    y1 = len(classif[classif['Labels'] == 1][classif['Proba_class1'] >= 0.5]) / len(classif[classif['Labels'] == 1]) * 100
+                    y2 = len(classif[classif['Labels'] == 1][classif['Proba_class1'] < 0.5]) / len(classif[classif['Labels'] == 1]) * 100
+                    # Plot data
+                    ax = axes[i, j]
+                    ax.bar('A', y1, width=0.5, label=f'{hto} - {grna}', color=colors[i], alpha=1)  # Use different colors for each HTO
+                    ax.bar('A', y2, width=0.5, label=f'{hto} - {grna} (Second)', color=common_color, alpha=0.73, bottom=y1)  # Common for the second bar, stacked on top
+                    ax.get_xaxis().set_visible(False)
+                    ax.set_title(grna, fontdict={'family':'sans-serif','color':'black','weight':'normal','size':14})
+        # Add legend with color patches for each HTO and the common color
+        for i, hto in enumerate(hto_list):
+            legend_ax = fig.add_subplot(len(hto_list), 1, i+1)
+            legend_patches = [patches.Patch(color=colors[i], label='Perturbed cells %')]
+
+            # Add color patch for the common color
+            legend_patches.append(patches.Patch(color=common_color, label='Non perturbed cells %'))
+
+            legend_ax.legend(handles=legend_patches, loc='center left', bbox_to_anchor=(1, 0.5), title=hto, fontsize='large', title_fontsize='x-large')
+            legend_ax.axis('off')
+
+        plt.tight_layout()
+        plt.savefig(f'{results_dir}/perturbed_cells.png')
         plt.close()
+    
+    else :        
+        # Common color for the second bar in each plot
+        common_color = 'bisque'
+
+        grna_list = targets
+        # Determine the number of rows and columns for the layout
+        num_grna = len(grna_list)
+        num_cols = min(8, num_grna)
+        num_rows = (num_grna - 1) // num_cols + 1
+
+        # Create a figure and subplots
+        fig, axes = plt.subplots(num_rows, num_cols, figsize=(25, 15), sharex='col', sharey='row')
+
+        # Generate example data and plot for each grna
+        for i, condition in enumerate(grna_list):
+            # Calculate the row and column index
+            row_index = i // num_cols
+            col_index = i % num_cols
+            if condition in df.index :
+                y1, y2 = df.loc[condition, ['True_positive', 'False_negative']].values
+                # Plot data
+                ax = axes[row_index, col_index] if num_rows > 1 else axes[col_index]
+                ax.bar('A', y1, width=0.5, label=f'{grna}', color='mediumslateblue', alpha=1)  # Use blue color for all bars
+                ax.bar('A', y2, width=0.5, label=f'{grna} (Second)', color=common_color, alpha=0.63, bottom=y1)  # Same color for the second bar, stacked on top
+                # Set title with a rectangle around it
+                ax.set_title(f'{grna}', fontdict={'fontsize': 12, 'fontweight': 'normal', 'fontfamily': 'sans-serif'})
+                ax.get_xaxis().set_visible(False)
+                # Hide the y-axis
+                ax.get_yaxis().set_visible(False)
+            
+            elif 'Labelspred_softmax.csv' in os.listdir(f'{results_dir}/{condition}') :
+                classif = pd.read_csv(f'{results_dir}/{condition}/Labelspred_softmax.csv', sep=';', header=0)
+                y1 = len(classif[classif['Labels'] == 1][classif['Proba_class1'] >= 0.5]) / len(classif[classif['Labels'] == 1]) * 100
+                y2 = len(classif[classif['Labels'] == 1][classif['Proba_class1'] < 0.5]) / len(classif[classif['Labels'] == 1]) * 100
+                ax = axes[row_index, col_index] if num_rows > 1 else axes[col_index]
+                ax.bar('A', y1, width=0.5, label=f'{grna}', color='mediumslateblue', alpha=1)  # Use blue color for all bars
+                ax.bar('A', y2, width=0.5, label=f'{grna} (Second)', color=common_color, alpha=0.63, bottom=y1)  # Same color for the second bar, stacked on top
+                # Set title with a rectangle around it
+                ax.set_title(f'{grna}', fontdict={'fontsize': 12, 'fontweight': 'normal', 'fontfamily': 'sans-serif'})
+                ax.get_xaxis().set_visible(False)
+                # Hide the y-axis
+                ax.get_yaxis().set_visible(False)
+
+        # Create legend outside of subplots
+        legend_patches = [patches.Patch(color='mediumslateblue', label='Perturbed %'), patches.Patch(color=common_color, label='Non perturbed cells %')]
+        plt.legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, -0.1), fancybox=True, shadow=True, ncol=2)
+
+        # Adjust layout to accommodate legends and color descriptions
+        plt.tight_layout()
+        plt.savefig(f'{results_dir}/perturbed_cells.png')
+        plt.close()
+
+def plot_weight_FC(results_dir, targets, hto_names = None) :
+    if hto_names :
+        for hto in hto_names :
+            for target in targets :
+                df = pd.read_csv(f'{results_dir}/{target}/{hto}/weight_expression.csv', header=0, index_col=0)
+                df = df.nlargest(30, 'Weight')
+                _, ax = plt.subplots(figsize = (9,7))
+                weights = list(df['Weight'])
+                fc = list(df['log2_FC'])
+                colors = list(df['color'])
+                names=list(df.index)
+                ax.scatter(x=fc, y=weights, c=colors)
+                ax.set_xlabel('log(Fold Change)')
+                ax.set_ylabel('Gene weight')
+                ax.set_title(f'{target} - {hto}')
+                for i, txt in enumerate(names):
+                    ax.annotate(txt, (fc[i], weights[i]), ha='center')
+                plt.tight_layout()
+                plt.savefig(f'{results_dir}/{target}/{hto}/weight_logFC.png')
+
+def distrib_classif(results_dir, condition, df, eta='', run='') :
+    
+
+    df['Classification'] = df['Labels'].replace({0: "control", 1: "targeted"})
+    plt.figure()
+    sns.kdeplot(data=df, x='Proba_class1', hue='Classification', alpha=.3, fill=True)
+    plt.xlabel('Perturbation score')
+    plt.tight_layout()
+    if eta and run :
+        plt.savefig(f'{results_dir}/{condition}/Perturbation_score_eta{eta}_run{run}.png')
+    elif eta :
+        plt.savefig(f'{results_dir}/{condition}/Perturbation_score_eta{eta}.png')
+    elif run :
+        plt.savefig(f'{results_dir}/{condition}/Perturbation_score_run{run}.png')
+    else :
+        plt.savefig(f'{results_dir}/{condition}/Perturbation_score.png')    
+    plt.close()
+
+
