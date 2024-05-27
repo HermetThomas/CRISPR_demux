@@ -1,4 +1,4 @@
-name: final
+name: CRISPR_demux
 channels:
   - defaults
 dependencies:
@@ -165,5 +165,4 @@ dependencies:
     - zipp==3.17.0
     - zope.event==5.0
     - zope.interface==6.2
-prefix: /data/data_hermet/anaconda3/envs/final
 
