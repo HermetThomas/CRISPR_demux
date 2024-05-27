@@ -25,31 +25,14 @@ David Chardin, Cyprien Gille, Thierry Pourcher and Michel Barlaud : *Accurate Di
 ## **Repository Content**
 |File/Folder|Description|
 |:-:|:-:|
-|autoencoder/|Contains the AutoEncoder sript and functions it calls|
 |CRISPR_demux.py|Main script to launch|
-|CRISPR_env.yml|Conda environment in which the script is launched|
-|CRISPR_functions.py|Definition of functions used in the main script|
+|autoencoder/|Contains the AutoEncoder sript and functions it calls|
 |requirements.txt|Python packages required to run the script|
 
 ## **Installation**
 
-Use conda to create a python environment contain all the required dependencies
-
-Clone the repository on yout device
 ```{bash}
 git clone https://github.com/HermetThomas/CRISPR_demux.git
-cd CRISPR_demux
-```
-
-Create a conda environment containing the needed dependencies
-```{bash}
-conda env create -f CRISPR_env.yml
-conda activate CRISPR_env
-```
-
-Or if you are already working on python 3.8.0 or more recent 
-```{bash}
-pip install -r requirements.txt
 ```
 
 ## **Input format**
@@ -66,7 +49,7 @@ Example :
    * gRNA_UMI_Lib1_06-24/
    * gRNA_UMI_Lib2_06-24/ 
    * HTO_Lib1_03-04-2024_01/
-   * HTO_Lib2_03-04-2024_01/
+   * HTO_Lib2_03-04-2024_02/
 
 The different libraries need to contain the same files as the following :
 
@@ -79,12 +62,6 @@ The different libraries need to contain the same files as the following :
    * matrix.mtx.gz  
    * barcodes.tsv.gz
    * features.tsv.gz
- 
-The files names can contain a common prefix :
-
-  * Exp1_CRISPR_matrix.mtx.gz
-  * Exp1_CRISPR_barcodes.tsv.gz
-  * Exp1_CRISPR_features.tsv.gz
 
 
 ### **Matrix.mtx**
@@ -112,16 +89,18 @@ The HTO and gRNA counts are found by using the gene types in the features.tsv.gz
 
 'Antibody Capture' &rarr; HTO 
 
+Add -neg {Name of the negative control guides}
+Otherwise, the script will show the list of gRNA in the dataset and ask for the negative controls
+
+
 ```{bash}
 python3 CRISPR_demux.py 
    -libs number_of_libraries
    -counts /path/to/first/counts_library/
+   -neg Neg_control1 Neg_control2
 ```
 
-*Add '-plot' if you want to plot the distribution of gRNAs and HTOs*
-
-*Add '-pathways' if you want to find pathways associated to the most disciminant genes*
-
+If the negative controls have a common name, use -neg {common_name}
 
 
 ### **If the HTO counts or gRNA counts are in a separate counts matrix**
@@ -130,6 +109,7 @@ Add the path to the first library of HTO counts / gRNA counts / both
 
 ```{bash}
 python3 CRISPR_demux.py 
+   -libs number_of_libraries
    -counts /path/to/first/counts_library/
    -grna /path/to/first/gRNA_library/
    -hto /path/to/first/HTO_library/
@@ -142,6 +122,55 @@ Add '-nohto' to the command line
 
 ```{bash}
 python3 CRISR_demux.py
+   -libs number_of libraries
    -counts /path/to/first/counts_library/
    -nohto
 ```
+
+### **If you want to plot the distribution of the gRNAs and HTOs among the cells**
+
+Add '-plot' to the command line
+
+```{bash}
+python3 CRISR_demux.py
+   -libs number_of libraries
+   -counts /path/to/first/counts_library/
+   -plot
+```
+
+
+### **If you want to perform multiple runs on the same dataset**
+
+Add '-runs {number of runs to compute}' to the command line
+
+```{bash}
+python3 CRISR_demux.py
+   -libs number_of libraries
+   -counts /path/to/first/counts_library/
+   -runs 3
+```
+
+### **If you want to search for  pathways associated to the discriminant genes**
+
+Add '-pathways' to the command line
+
+```{bash}
+python3 CRISR_demux.py
+   -libs number_of libraries
+   -counts /path/to/first/counts_library/
+   -runs 3
+   -pathways
+```
+
+### **If you want to use the op^timal projection radius for each subdataset**
+
+Add '-eta' to the command line
+
+```{bash}
+python3 CRISR_demux.py
+   -libs number_of libraries
+   -counts /path/to/first/counts_library/
+   -eta
+```
+
+[!WARNING] The computation time will be multiplied by the number of tested parameters
