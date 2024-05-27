@@ -1375,11 +1375,6 @@ def CRISPR_demux() :
             
 
         elif args.runs == 1 :
-
-            """mapping = {'HTO_1' : 'DOHH2', 'HTO_2' : 'DOHH2', 'HTO_3' : 'WSU-FSCCL', 'HTO_4' : 'WSU-FSCCL'}
-            top10k.obs['Classif_HTO'] = top10k.obs['Classif_HTO'].replace(mapping)
-            hto_names = ['DOHH2', 'WSU-FSSCL']"""
-
             results_df = pd.DataFrame(columns=['nb_cells', 'Accuracy', 'AUC', 'Precision', 'Recall', 'F1_score'])
             classif_df = pd.DataFrame(columns = ['nb_cells', 'True_positive', 'False_negative'])
             results_df2 = pd.DataFrame(columns=['nb_cells', 'Accuracy', 'AUC', 'Precision', 'Recall', 'F1_score'])
