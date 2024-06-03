@@ -109,10 +109,10 @@ Add the path to the first library of HTO counts / gRNA counts / both
 
 ```{bash}
 python3 CRISPR_demux.py 
-   -libs number_of_libraries
    -counts /path/to/first/counts_library/
    -grna /path/to/first/gRNA_library/
    -hto /path/to/first/HTO_library/
+   -neg Neg_control1 Neg_control2
 ```
 
 
@@ -122,8 +122,8 @@ Add '-nohto' to the command line
 
 ```{bash}
 python3 CRISR_demux.py
-   -libs number_of libraries
    -counts /path/to/first/counts_library/
+   -neg Neg_control1 Neg_control2
    -nohto
 ```
 
@@ -133,8 +133,8 @@ Add '-plot' to the command line
 
 ```{bash}
 python3 CRISR_demux.py
-   -libs number_of libraries
    -counts /path/to/first/counts_library/
+   -neg Neg_control1 Neg_control2
    -plot
 ```
 
@@ -145,8 +145,8 @@ Add '-runs {number of runs to compute}' to the command line
 
 ```{bash}
 python3 CRISR_demux.py
-   -libs number_of libraries
    -counts /path/to/first/counts_library/
+   -neg Neg_control1 Neg_control2
    -runs 3
 ```
 
@@ -156,20 +156,20 @@ Add '-pathways' to the command line
 
 ```{bash}
 python3 CRISR_demux.py
-   -libs number_of libraries
    -counts /path/to/first/counts_library/
+   -neg Neg_control1 Neg_control2
    -runs 3
    -pathways
 ```
 
-### **If you want to use the op^timal projection radius for each subdataset**
+### **If you want to use the optimal projection radius for each subdataset**
 
 Add '-eta' to the command line
 
 ```{bash}
 python3 CRISR_demux.py
-   -libs number_of libraries
    -counts /path/to/first/counts_library/
+   -neg Neg_control1 Neg_control2
    -eta
 ```
 
