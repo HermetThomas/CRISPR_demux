@@ -1480,7 +1480,8 @@ def CRISPR_demux() :
 
 
         top_genes(results_dir, targets, hto_names, pathways = args.pathways)
-        plot_classif(results_dir, classif_df2, targets, hto_names)                              
+        plot_classif(results_dir, classif_df2, targets, hto_names)          
+        accuracy_heatmap(results_dir, targets, hto_names)
 
         end = time.time()
 
