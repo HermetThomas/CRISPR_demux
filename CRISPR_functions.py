@@ -516,4 +516,20 @@ def distrib_classif(results_dir, condition, df, eta='', run='') :
         plt.savefig(f'{results_dir}/{condition}/Perturbation_score.png')    
     plt.close()
 
+def accuracy_heatmap(results_dir, targets, hto_names) :
+    df2 = pd.DataFrame(columns=hto_names)
+    for HTO in hto_names :
+        for target in targets :
+            if HTO in os.listdir(f'{results_dir}/{target}') :
+                if 'Perturbation_score_run2.png' in os.listdir(f'{results_dir}/{target}/{HTO}') :
+                    acc_file = next((file for file in os.listdir(f'{results_dir}/{target}/{HTO}') if 'acc' in file), None)      
+                    df2.loc[target, HTO] = pd.read_csv(f'{results_dir}/{target}/{HTO}/{acc_file}', sep=';', index_col=0, header=0).loc['Mean', 'Global']
 
+    df = df2.apply(pd.to_numeric, errors='coerce')
+
+    df_filled = df.fillna(0)
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(df_filled, annot=True, cmap='RdYlGn', linewidths=.4)
+    plt.title('Heatmap of Accuracy per condition')
+    plt.savefig(f'{results_dir}/accuracy_heatmap.png')
