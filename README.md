@@ -26,7 +26,6 @@ David Chardin, Cyprien Gille, Thierry Pourcher and Michel Barlaud : *Accurate Di
 |File/Folder|Description|
 |:-:|:-:|
 |CRISPR_demux.py|Script to launch for gRNA / gRNA+HTO classification|
-|cell_classifier.py|Script to launch for HTO classification|
 |autoencoder/|Contains the AutoEncoder sript and functions it calls|
 |requirements.txt|Python packages required to run the script|
 
