@@ -7,7 +7,6 @@ import scanpy as sc; sc.settings.verbosity = 0
 from scanpy.external.pp import hashsolo
 import matplotlib.pyplot as plt
 import seaborn as sns
-from tqdm import trange, tqdm
 import os
 import shutil
 import anndata as ad
