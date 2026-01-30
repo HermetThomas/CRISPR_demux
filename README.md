@@ -1,10 +1,13 @@
 # CRISPR_demux
 
-This repository contains a Python script used to exctract discriminating genes between the various conditions in your dataset.
+This repository is an adaptation of the cell_classifier repository.
+It was made specifically to be usable on raw single cell data combining the use of gene counts matrix, gRNA counts matrix and HTO counts matrix. 
 
-The script uses Hashsolo by Scanpy to load Cellranger counts matrices and perform the demultiplexing of the X HTOs and Y gRNAs in the dataset.
-It then separates the dataset into X*Y subsets according to the HTO and gRNA in each cell.
-The top discriminating features between each condition and the negative control are found through the use of a supervised AutoEncoder and stored in a dataframe. The biological pathways in which these genes are implicated are fetched in the KEGG database with the BioServices package.
+The script loads the Cellranger raw counts matrices and combines them into a single AnnData Object.
+It furthers demultiplexes it with the Hashsolo function by Scanpy to determine the gRNA and HTO associated to each cell present in the dataset.
+It then separates the dataset into X x Y subsets depending on the number of unnique gRNA and HTO.
+
+We use a supervised AutoEncoder to find top discriminant features between a condition of interest and a control condition. We added an option to fetch in the KEGG database the biological pathways in which these discriminant genes are implicated, with the use of the BioServices package.
 
 The AutoEncoder used to perform the classification was developed by Barlaud M. and Guyard F. and published in the following papers :
 
