@@ -28,7 +28,8 @@ David Chardin, Cyprien Gille, Thierry Pourcher and Michel Barlaud : *Accurate Di
 ## **Repository Content**
 |File/Folder|Description|
 |:-:|:-:|
-|CRISPR_demux.py|Script to launch for gRNA / gRNA+HTO classification|
+|CRISPR_demux.py|Script to run the analysis|
+|CRISPR_functions.py|Various functions used in the main script|
 |autoencoder/|Contains the AutoEncoder sript and functions it calls|
 |requirements.txt|Python packages required to run the script|
 
